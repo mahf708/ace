@@ -119,8 +119,9 @@ class RealSHT(nn.Module):
 
     def forward(self, x: torch.Tensor):
 
-        assert(x.shape[-2] == self.nlat)
-        assert(x.shape[-1] == self.nlon)
+        if not torch.jit.is_tracing():
+            assert(x.shape[-2] == self.nlat)
+            assert(x.shape[-1] == self.nlon)
 
         # apply real fft in the longitudinal direction
         x = 2.0 * torch.pi * torch.fft.rfft(x, dim=-1, norm="forward")
@@ -135,9 +136,9 @@ class RealSHT(nn.Module):
         xout = torch.zeros(out_shape, dtype=x.dtype, device=x.device)
 
         # contraction
-        self.weights = self.weights.to(x.device)
-        xout[..., 0] = torch.einsum('...km,mlk->...lm', x[..., :self.mmax, 0], self.weights)
-        xout[..., 1] = torch.einsum('...km,mlk->...lm', x[..., :self.mmax, 1], self.weights)
+        xy = self.weights.to(x.device)
+        xout[..., 0] = torch.einsum('...km,mlk->...lm', x[..., :self.mmax, 0], xy)
+        xout[..., 1] = torch.einsum('...km,mlk->...lm', x[..., :self.mmax, 1], xy)
         x = torch.view_as_complex(xout)
 
         return x
@@ -197,15 +198,16 @@ class InverseRealSHT(nn.Module):
 
     def forward(self, x: torch.Tensor):
 
-        assert(x.shape[-2] == self.lmax)
-        assert(x.shape[-1] == self.mmax)
+        if not torch.jit.is_tracing():
+            assert(x.shape[-2] == self.lmax)
+            assert(x.shape[-1] == self.mmax)
 
         # Evaluate associated Legendre functions on the output nodes
         x = torch.view_as_real(x)
 
-        self.pct = self.pct.to(x.device)
-        rl = torch.einsum('...lm, mlk->...km', x[..., 0], self.pct )
-        im = torch.einsum('...lm, mlk->...km', x[..., 1], self.pct )
+        xy_pct = self.pct.to(x.device)
+        rl = torch.einsum('...lm, mlk->...km', x[..., 0], xy_pct )
+        im = torch.einsum('...lm, mlk->...km', x[..., 1], xy_pct )
         xs = torch.stack((rl, im), -1)
 
         # apply the inverse (real) FFT
@@ -373,28 +375,30 @@ class InverseRealVectorSHT(nn.Module):
 
     def forward(self, x: torch.Tensor):
 
-        assert(x.shape[-2] == self.lmax)
-        assert(x.shape[-1] == self.mmax)
+        if not torch.jit.is_tracing():
+            assert(x.shape[-2] == self.lmax)
+            assert(x.shape[-1] == self.mmax)
 
         # Evaluate associated Legendre functions on the output nodes
         x = torch.view_as_real(x)
 
         # contraction - spheroidal component
         # real component
-        self.dpct = self.dpct.to(x.device)
-        srl =   torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 0], self.dpct[0]) \
-              - torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 1], self.dpct[1])
+        xy_dpct = self.dpct.to(x.device)
+        srl =   torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 0], xy_dpct[0]) \
+              - torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 1], xy_dpct[1])
         # iamg component
-        sim =   torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 1], self.dpct[0]) \
-              + torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 0], self.dpct[1])
+        sim =   torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 1], xy_dpct[0]) \
+              + torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 0], xy_dpct[1])
 
         # contraction - toroidal component
         # real component
-        trl = - torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 1], self.dpct[1]) \
-              - torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 0], self.dpct[0])
+        xy_dpct = self.dpct.to(x.device)
+        trl = - torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 1], xy_dpct[1]) \
+              - torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 0], xy_dpct[0])
         # imag component
-        tim =   torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 0], self.dpct[1]) \
-              - torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 1], self.dpct[0])
+        tim =   torch.einsum('...lm,mlk->...km', x[..., 0, :, :, 0], xy_dpct[1]) \
+              - torch.einsum('...lm,mlk->...km', x[..., 1, :, :, 1], xy_dpct[0])
 
         # reassemble
         s = torch.stack((srl, sim), -1)

@@ -49,6 +49,18 @@ def load_stepper(
 ) -> SingleModuleStepper:
     checkpoint = torch.load(checkpoint_file, map_location=fme.get_device())
     stepper = SingleModuleStepper.from_state(checkpoint["stepper"])
+    # save the original model checkpoint as a torchscript checkpoint by tracing
+    logging.info(f"Saving traced torchscript checkpoint from {checkpoint_file}")
+    example_input = torch.rand(1, len(stepper.in_names), *stepper._img_shape).to(fme.get_device())
+    logging.info(
+        f"Tracing with example input shape: {example_input.shape}, "
+        f"timestep: {stepper.timestep}, in_names: {stepper.in_names}, "
+        f"out_names: {stepper.out_names}"
+    )
+    traced_script_module = torch.jit.trace(stepper.module, example_input)
+    traced_checkpoint_path = checkpoint_file.replace(".tar", "_traced.tar")
+    traced_script_module.save(traced_checkpoint_path)
+    logging.info(f"Saved traced torchscript checkpoint to {traced_checkpoint_path}")
     if ocean_config is not None:
         logging.info(
             "Overriding training ocean configuration with the inference ocean config."
