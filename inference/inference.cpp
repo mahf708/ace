@@ -3,7 +3,7 @@
 #include <string>
 #include <torch/script.h> // Torch C++ inference
 
-int main(int argc, char** argv) {
+void run_inference() {
     // Hardcoded configuration values
     std::string experiment_dir = "scratch/inference_output";
     int n_forward_steps = 3;
@@ -21,7 +21,6 @@ int main(int argc, char** argv) {
     std::ifstream cp_file(checkpoint_path, std::ios::binary);
     if (!cp_file.good()) {
         std::cerr << "Checkpoint file not found: " << checkpoint_path << "\n";
-        return -1;
     }
     cp_file.close();
 
@@ -33,7 +32,6 @@ int main(int argc, char** argv) {
     } catch (const c10::Error& e) {
         std::cerr << "Error loading the model checkpoint: " << e.what() << "\n";
         std::cerr << "Verify that the checkpoint was properly exported and includes 'constants.pkl'.\n";
-        return -1;
     }
     // Move input tensor to the module's device (determined from its first parameter)
     auto device = (*module.parameters().begin()).device();
@@ -47,5 +45,4 @@ int main(int argc, char** argv) {
     // std::cout << "Inference output sample: " << output.slice(/*dim=*/1, 0, 5) << std::endl;
     std::cout << "Inference output shape: " << output.sizes() << std::endl;
     std::cout << "Inference completed. Results stored in: " << experiment_dir << std::endl;
-    return 0;
 }
