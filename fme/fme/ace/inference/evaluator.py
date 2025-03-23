@@ -49,18 +49,36 @@ def load_stepper(
 ) -> SingleModuleStepper:
     checkpoint = torch.load(checkpoint_file, map_location=fme.get_device())
     stepper = SingleModuleStepper.from_state(checkpoint["stepper"])
+    device = fme.get_device()
+    
     # save the original model checkpoint as a torchscript checkpoint by tracing
     logging.info(f"Saving traced torchscript checkpoint from {checkpoint_file}")
-    example_input = torch.rand(1, len(stepper.in_names), *stepper._img_shape).to(fme.get_device())
+    example_input = torch.rand(1, len(stepper.in_names), *stepper._img_shape).to(device)
     logging.info(
         f"Tracing with example input shape: {example_input.shape}, "
         f"timestep: {stepper.timestep}, in_names: {stepper.in_names}, "
         f"out_names: {stepper.out_names}"
     )
-    traced_script_module = torch.jit.trace(stepper.module, example_input)
+    traced_script_module = torch.jit.trace(stepper.module.to(device), example_input)
     traced_checkpoint_path = checkpoint_file.replace(".tar", "_traced.tar")
     traced_script_module.save(traced_checkpoint_path)
     logging.info(f"Saved traced torchscript checkpoint to {traced_checkpoint_path}")
+
+    # repeat tracing for CPU device separately
+    checkpoint_cpu = torch.load(checkpoint_file, map_location="cpu")
+    stepper_cpu = SingleModuleStepper.from_state(checkpoint_cpu["stepper"])
+    logging.info(f"Saving traced torchscript CPU checkpoint from {checkpoint_file}")
+    example_input_cpu = torch.rand(1, len(stepper_cpu.in_names), *stepper_cpu._img_shape).to("cpu")
+    logging.info(
+        f"Tracing CPU with example input shape: {example_input_cpu.shape}, "
+        f"timestep: {stepper_cpu.timestep}, in_names: {stepper_cpu.in_names}, "
+        f"out_names: {stepper_cpu.out_names}"
+    )
+    traced_script_module_cpu = torch.jit.trace(stepper_cpu.module.to("cpu"), example_input_cpu)
+    traced_checkpoint_path_cpu = checkpoint_file.replace(".tar", "_traced_cpu.tar")
+    traced_script_module_cpu.save(traced_checkpoint_path_cpu)
+    logging.info(f"Saved traced torchscript CPU checkpoint to {traced_checkpoint_path_cpu}")
+
     if ocean_config is not None:
         logging.info(
             "Overriding training ocean configuration with the inference ocean config."
