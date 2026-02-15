@@ -1,9 +1,9 @@
 import copy
 import dataclasses
 import datetime
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 import cftime
 import numpy as np
@@ -20,6 +20,9 @@ from fme.ace.inference.data_writer.utils import (
 )
 from fme.core.cloud import is_local
 from fme.core.dataset.data_typing import VariableMetadata
+from fme.core.device import get_device
+from fme.core.distributed import Distributed
+from fme.core.writer import DATETIME_ENCODING_UNITS
 
 LEAD_TIME_DIM = "time"
 LEAD_TIME_UNITS = "microseconds"
@@ -33,6 +36,97 @@ VALID_TIME = "valid_time"
 class NetCDFWriterConfig:
     name: Literal["netcdf"] = "netcdf"  # defined for yaml+dacite ease of use
     suffix: str = "nc"
+
+
+class WriterProtocol(Protocol):
+    def append_batch(
+        self,
+        data: dict[str, torch.Tensor],
+        batch_time: xr.DataArray,
+    ) -> None: ...
+
+    def flush(self) -> None: ...
+
+    def finalize(self) -> None: ...
+
+
+class SpatialGatherWriter:
+    """
+    Wrapper that gathers spatially-partitioned data to the root rank before writing.
+    Intended for use with RawDataWriter when spatial parallelism is active.
+    """
+
+    def __init__(
+        self,
+        writer_factory: Callable[[], WriterProtocol],
+    ):
+        self._dist = Distributed.get_instance()
+        if self._dist.is_root():
+            self._writer: WriterProtocol | None = writer_factory()
+        else:
+            self._writer = None
+
+    def append_batch(
+        self,
+        data: dict[str, torch.Tensor],
+        batch_time: xr.DataArray,
+    ):
+        # Gather data variables
+        # Note: gather_irregular handles both spatial (if implemented in backend)
+        # and batch gathering.
+        gathered_data = {}
+        for name, tensor in data.items():
+            gathered_list = self._dist.gather_irregular(tensor)
+            if self._dist.is_root() and gathered_list is not None:
+                gathered_data[name] = torch.cat(gathered_list, dim=0)
+
+        # Gather time coordinates
+        # batch_time values are cftime objects, so we convert to numeric for gathering
+        if hasattr(batch_time, "dt"):
+            calendar = batch_time.dt.calendar
+        else:
+            # Fallback/assumption if .dt accessor not available (e.g. if single value?)
+            # But batch_time should be DataArray.
+            # We assume "standard" or "julian" if undefined, or peek at first element?
+            # cftime objects usually know their calendar.
+            # cftime.date2num doesn't require calendar if objects are cftime?
+            # "If the calendar argument is not provided, the calendar is inferred from the datetime objects."
+            calendar = None
+
+        numeric_time = cftime.date2num(
+            batch_time.values, units=DATETIME_ENCODING_UNITS, calendar=calendar
+        )
+        # cftime.date2num might return float, convert to tensor
+        time_tensor = torch.tensor(numeric_time, device=get_device())
+        gathered_time_list = self._dist.gather_irregular(time_tensor)
+
+        if self._dist.is_root():
+            assert self._writer is not None
+            # Reconstruct batch_time DataArray
+            gathered_time_values = (
+                torch.cat(gathered_time_list, dim=0).cpu().numpy()  # type: ignore
+            )
+            # Use same calendar as input for reconstruction if available
+            reconstructed_time = cftime.num2date(
+                gathered_time_values, units=DATETIME_ENCODING_UNITS, calendar=calendar
+            )
+            gathered_batch_time = xr.DataArray(
+                reconstructed_time, dims=batch_time.dims, attrs=batch_time.attrs
+            )
+            if hasattr(batch_time, "dt") and hasattr(gathered_batch_time, "dt"):
+                # DataArray.dt accessor might need to be "warmed up" or attrs set?
+                # Usually xarray handles this if values are cftime.
+                pass
+
+            self._writer.append_batch(gathered_data, gathered_batch_time)
+
+    def flush(self):
+        if self._dist.is_root() and self._writer is not None:
+            self._writer.flush()
+
+    def finalize(self):
+        if self._dist.is_root() and self._writer is not None:
+            self._writer.finalize()
 
 
 class PairedRawDataWriter:
@@ -51,24 +145,26 @@ class PairedRawDataWriter:
         coords: Mapping[str, np.ndarray],
         dataset_metadata: DatasetMetadata,
     ):
-        self._target_writer = RawDataWriter(
-            path=path,
-            label="autoregressive_target",
-            n_initial_conditions=n_initial_conditions,
-            save_names=save_names,
-            variable_metadata=variable_metadata,
-            coords=coords,
-            dataset_metadata=dataset_metadata,
-        )
-        self._prediction_writer = RawDataWriter(
-            path=path,
-            label="autoregressive_predictions",
-            n_initial_conditions=n_initial_conditions,
-            save_names=save_names,
-            variable_metadata=variable_metadata,
-            coords=coords,
-            dataset_metadata=dataset_metadata,
-        )
+        dist = Distributed.get_instance()
+
+        def _build_writer(label: str):
+            def factory():
+                return RawDataWriter(
+                    path=path,
+                    label=label,
+                    n_initial_conditions=n_initial_conditions,
+                    save_names=save_names,
+                    variable_metadata=variable_metadata,
+                    coords=coords,
+                    dataset_metadata=dataset_metadata,
+                )
+
+            if dist.comm_get_size("h") > 1 or dist.comm_get_size("w") > 1:
+                return SpatialGatherWriter(factory)
+            return factory()
+
+        self._target_writer = _build_writer("autoregressive_target")
+        self._prediction_writer = _build_writer("autoregressive_predictions")
 
     def append_batch(
         self,

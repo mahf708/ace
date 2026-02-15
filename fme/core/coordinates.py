@@ -654,6 +654,19 @@ class HorizontalCoordinates(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def subset(self: HC, spatial_slices: Mapping[str, slice]) -> HC:
+        """
+        Subset the coordinates based on the provided slices.
+
+        Args:
+            spatial_slices: Mapping from dimension name to slice.
+
+        Returns:
+            Subsetted coordinates.
+        """
+        pass
+
+    @abc.abstractmethod
     def to_state(self) -> TensorMapping:
         pass
 
@@ -743,6 +756,14 @@ class LatLonCoordinates(HorizontalCoordinates):
     @property
     def shape(self) -> tuple[int, int]:
         return (len(self.lat), len(self.lon))
+
+    def subset(self, spatial_slices: Mapping[str, slice]) -> "LatLonCoordinates":
+        lat_slice = spatial_slices.get("lat", slice(None))
+        lon_slice = spatial_slices.get("lon", slice(None))
+        return LatLonCoordinates(
+            lat=self.lat[lat_slice],
+            lon=self.lon[lon_slice],
+        )
 
     def to_state(self) -> TensorMapping:
         return {"lat": self.lat, "lon": self.lon}
@@ -888,6 +909,16 @@ class HEALPixCoordinates(HorizontalCoordinates):
     @property
     def shape(self) -> tuple[int, int, int]:
         return (len(self.face), len(self.width), len(self.height))
+
+    def subset(self, spatial_slices: Mapping[str, slice]) -> "HEALPixCoordinates":
+        if any(
+            s != slice(None) and s != slice(None, None, None)
+            for s in spatial_slices.values()
+        ):
+            raise NotImplementedError(
+                "Spatial slicing is not yet supported for HEALPixCoordinates."
+            )
+        return self
 
     def to_state(self) -> TensorMapping:
         return {"face": self.face, "height": self.height, "width": self.width}

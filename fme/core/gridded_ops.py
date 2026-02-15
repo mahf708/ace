@@ -294,8 +294,7 @@ class LatLonOperations(GriddedOperations):
                 "Area weights must be longitudinally uniform, "
                 "as assumed for zonal mean."
             )
-        dist = Distributed.get_instance()
-        area_weights = area_weights[*dist.get_local_slices(area_weights.shape)]
+        # Area weights are assumed to be already sliced for the local rank
         self._device_area = area_weights.to(get_device())
         self._cpu_area = area_weights.to("cpu")
         self._device_mask_provider = mask_provider.to(get_device())

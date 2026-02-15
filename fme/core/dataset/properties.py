@@ -17,6 +17,7 @@ class DatasetProperties:
         timestep: datetime.timedelta | None,
         is_remote: bool,
         all_labels: set[str] | None,
+        global_coordinates: HorizontalCoordinates | None = None,
     ):
         self.variable_metadata = variable_metadata
         self.vertical_coordinate = vertical_coordinate
@@ -25,6 +26,7 @@ class DatasetProperties:
         self.timestep = timestep
         self.is_remote = is_remote
         self.all_labels = all_labels
+        self.global_coordinates = global_coordinates or horizontal_coordinates
 
     def to_device(self) -> "DatasetProperties":
         device = get_device()
@@ -36,6 +38,7 @@ class DatasetProperties:
             self.timestep,
             self.is_remote,
             self.all_labels,
+            self.global_coordinates.to(device),
         )
 
     def update(self, other: "DatasetProperties", strict: bool = True):
@@ -95,4 +98,5 @@ class DatasetProperties:
             self.timestep,
             self.is_remote,
             self.all_labels,
+            self.global_coordinates,
         )

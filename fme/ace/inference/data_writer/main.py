@@ -352,24 +352,32 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
                 return time_coarsen.build(data_writer)
             return data_writer
 
+        dist = Distributed.get_instance()
+
         if enable_prediction_netcdfs:
-            self._writers.append(
-                _time_coarsen_builder(
-                    RawDataWriter(
-                        path=path,
-                        label="autoregressive_predictions",
-                        n_initial_conditions=n_initial_conditions,
-                        save_names=save_names,
-                        variable_metadata=variable_metadata,
-                        coords=coords,
-                        dataset_metadata=dataset_metadata,
-                    )
+
+            def raw_factory():
+                return RawDataWriter(
+                    path=path,
+                    label="autoregressive_predictions",
+                    n_initial_conditions=n_initial_conditions,
+                    save_names=save_names,
+                    variable_metadata=variable_metadata,
+                    coords=coords,
+                    dataset_metadata=dataset_metadata,
                 )
-            )
+
+            if dist.comm_get_size("h") > 1 or dist.comm_get_size("w") > 1:
+                raw_writer = SpatialGatherWriter(raw_factory)
+            else:
+                raw_writer = raw_factory()
+
+            self._writers.append(_time_coarsen_builder(raw_writer))
 
         if enable_monthly_netcdfs:
-            self._writers.append(
-                MonthlyDataWriter(
+
+            def monthly_factory():
+                return MonthlyDataWriter(
                     path=path,
                     label="monthly_mean_predictions",
                     n_samples=n_initial_conditions,
@@ -378,7 +386,11 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
                     coords=coords,
                     dataset_metadata=dataset_metadata,
                 )
-            )
+
+            if dist.comm_get_size("h") > 1 or dist.comm_get_size("w") > 1:
+                self._writers.append(SpatialGatherWriter(monthly_factory))
+            else:
+                self._writers.append(monthly_factory())
 
         if files is not None:
             for writer_config in files:

@@ -98,7 +98,7 @@ class GriddedData(GriddedDataABC[BatchData]):
     @property
     def coords(self) -> Mapping[str, np.ndarray]:
         return {
-            **self.horizontal_coordinates.coords,
+            **self._properties.global_coordinates.coords,
             **self._vertical_coordinate.coords,
         }
 
@@ -225,7 +225,7 @@ class InferenceGriddedData(InferenceDataABC[PrognosticState, BatchData]):
     @property
     def coords(self) -> Mapping[str, np.ndarray]:
         return {
-            **self.horizontal_coordinates.coords,
+            **self._properties.global_coordinates.coords,
             **self._vertical_coordinate.coords,
         }
 

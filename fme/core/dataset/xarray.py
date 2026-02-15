@@ -31,6 +31,7 @@ from fme.core.dataset.properties import DatasetProperties
 from fme.core.dataset.schedule import IntSchedule
 from fme.core.dataset.time import RepeatedInterval, TimeSlice
 from fme.core.dataset.utils import FillNaNsConfig
+from fme.core.distributed import Distributed
 from fme.core.mask_provider import MaskProvider
 from fme.core.stacker import Stacker
 from fme.core.typing_ import Slice, TensorDict
@@ -568,6 +569,7 @@ class XarrayDataset(DatasetABC):
             self._static_derived_data,
             _loaded_horizontal_dims,
         ) = self.configure_horizontal_coordinates(first_dataset)
+        self._global_horizontal_coordinates = self._horizontal_coordinates
         (
             self._time_dependent_names,
             self._time_invariant_names,
@@ -576,6 +578,35 @@ class XarrayDataset(DatasetABC):
 
         self._vertical_coordinate = _get_vertical_coordinate(first_dataset, self.dtype)
         self.overwrite = config.overwrite
+
+        # Spatial Parallelism
+        dist = Distributed.get_instance()
+        self._spatial_slices = {}
+        horizontal_shape = tuple(
+            first_dataset.sizes[dim] for dim in _loaded_horizontal_dims
+        )
+        slices = dist.get_local_slices(horizontal_shape)
+        for dim, s in zip(_loaded_horizontal_dims, slices):
+            self._spatial_slices[dim] = s
+
+        if self._spatial_slices:
+            self._horizontal_coordinates = self._horizontal_coordinates.subset(
+                self._spatial_slices
+            )
+            # Re-initialize static derived data with sliced coordinates
+            self._static_derived_data = StaticDerivedData(self._horizontal_coordinates)
+
+            # Slice masks
+            # We assume masks match the horizontal dimensions order
+            mask_slices = tuple(
+                self._spatial_slices.get(dim, SLICE_NONE)
+                for dim in _loaded_horizontal_dims
+            )
+            new_masks = {
+                name: mask[mask_slices]
+                for name, mask in self._mask_provider.masks.items()
+            }
+            self._mask_provider = MaskProvider(new_masks)
 
         self._nonspacetime_dims = get_nonspacetime_dimensions(
             first_dataset, _loaded_horizontal_dims
@@ -588,6 +619,14 @@ class XarrayDataset(DatasetABC):
         self.isel = {
             dim: v if isinstance(v, int) else v.slice for dim, v in config.isel.items()
         }
+        # Merge spatial slices into isel
+        for dim, s in self._spatial_slices.items():
+            if dim in self.isel:
+                raise ValueError(
+                    f"Dimension {dim} is present in both isel and spatial slices."
+                )
+            self.isel[dim] = s
+
         self._isel_tuple = tuple(
             [self.isel.get(dim, SLICE_NONE) for dim in self._loaded_dims[1:]]
         )
@@ -632,7 +671,11 @@ class XarrayDataset(DatasetABC):
             raise ValueError("isel cannot be used to select time. Use subset instead.")
 
         for dim, selection in self.isel.items():
-            if dim not in self._nonspacetime_dims:
+            # Allow spatial dims if present in _spatial_slices
+            if (
+                dim not in self._nonspacetime_dims
+                and dim not in self._spatial_slices
+            ):
                 raise ValueError(
                     f"isel dimension {dim} must be a non-spacetime dimension "
                     f"of the dataset ({self._nonspacetime_dims})."
@@ -679,6 +722,7 @@ class XarrayDataset(DatasetABC):
             self.timestep,
             self._is_remote,
             self._labels,
+            global_coordinates=self._global_horizontal_coordinates,
         )
 
     @property

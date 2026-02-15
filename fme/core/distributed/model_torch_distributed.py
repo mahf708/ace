@@ -18,6 +18,9 @@ try:
 except ImportError:
     pnd = None
 
+from .model_torch_distributed_utils import gather_helper_conv
+from .torch_distributed import _gather_irregular
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,10 +107,25 @@ class ModelTorchDistributed(DistributedBackend):
         rank: int | None = None,
         data_parallel_dim: int | None = None,
     ):
-        # Under spatial parallelism, spatial slicing is determined by comm groups.
-        # Batch (data-parallel) partitioning is handled separately via
-        # local_batch_size and data_parallel_rank, not through get_local_slices.
-        return _get_local_slices(tensor_shape)
+        if data_parallel_dim is not None:
+            if tensor_shape[data_parallel_dim] % self.total_data_parallel_ranks != 0:
+                raise ValueError(
+                    "expected global data parallel dim to be divisible by data "
+                    f"parallel ranks, got global shape {tensor_shape} with "
+                    f"{self.total_data_parallel_ranks} data parallel ranks"
+                )
+            if rank is None:
+                # This assumes rank refers to the data parallel rank
+                rank = self.data_parallel_rank
+            per_rank = tensor_shape[data_parallel_dim] // self.total_data_parallel_ranks
+            return_list = [slice(None, None) for _ in tensor_shape]
+            return_list[data_parallel_dim] = slice(
+                rank * per_rank, (rank + 1) * per_rank
+            )
+            return tuple(return_list)
+        else:
+            # Under spatial parallelism, spatial slicing is determined by comm groups.
+            return _get_local_slices(tensor_shape)
 
     def local_batch_size(self, batch_size: int) -> int:
         return batch_size // comm.get_size("data")
@@ -147,13 +165,47 @@ class ModelTorchDistributed(DistributedBackend):
     def gather(
         self, tensor: torch.Tensor, gather_list: list[torch.Tensor] | None = None
     ) -> list[torch.Tensor] | None:
-        raise NotImplementedError(
-            "gather is not yet implemented for spatial parallelism"
+        # 1. Spatial All-Gather: reconstruct full spatial grid on every rank
+        tensor = gather_helper_conv(
+            tensor,
+            h_group=comm.get_group("h"),
+            w_group=comm.get_group("w"),
+            hdim=-2,  # assumes standard (..., H, W) layout
+            wdim=-1,
         )
 
+        # 2. Data Gather: gather all batches to root of data group
+        # Only ranks with model_rank == 0 participate in the data gather
+        # because they are the roots of their respective spatial groups.
+        # Actually, all ranks in a data group work on the same batch (different spatial).
+        # We want to gather FROM different data groups (different batches).
+        # We need to gather from ranks that hold the full spatial grid for their batch.
+        # Since we did All-Gather, EVERY rank holds full spatial for its batch.
+        # But we only need ONE representative per batch to send to root.
+        # Let's pick model_rank=0 (i.e. rank 0 within spatial group).
+        # Note: comm.get_rank("data") is the rank in the data group.
+        # comm.get_rank("model") is the rank in the spatial group (h*w).
+        # We want to gather to global rank 0. Global rank 0 has model_rank=0 and data_rank=0.
+
+        # Check if we are a "root" of the spatial partitioning (top-left corner)
+        is_spatial_root = comm.get_rank("h") == 0 and comm.get_rank("w") == 0
+
+        if is_spatial_root:
+            group = comm.get_group("data")
+            if gather_list is None and self.data_parallel_rank == 0:
+                gather_list = [tensor] + [
+                    torch.empty_like(tensor)
+                    for _ in range(self.total_data_parallel_ranks - 1)
+                ]
+            torch.distributed.gather(tensor, gather_list, group=group)
+            return gather_list
+        return None
+
     def gather_irregular(self, tensor: torch.Tensor) -> list[torch.Tensor] | None:
-        raise NotImplementedError(
-            "gather_irregular is not yet implemented for spatial parallelism"
+        return _gather_irregular(
+            tensor,
+            self.reduce_max,
+            self.gather,
         )
 
     @property

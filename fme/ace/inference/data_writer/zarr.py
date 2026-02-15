@@ -12,6 +12,7 @@ import xarray as xr
 from fme.core.dataset.data_typing import VariableMetadata
 from fme.core.dataset.utils import encode_timestep
 from fme.core.dataset.xarray import _get_timestep
+from fme.core.distributed import Distributed
 from fme.core.writer import DATETIME_ENCODING_UNITS, ZarrWriter
 
 from .dataset_metadata import DatasetMetadata
@@ -137,6 +138,7 @@ class ZarrWriterAdapter:
                     dims=("z_interface",),
                 )
         self._horizontal_coords = data_coords
+        self._dist = Distributed.get_instance()
 
     def _set_chunks(self, chunks):
         # Time and sample chunks required to be 1
@@ -202,15 +204,59 @@ class ZarrWriterAdapter:
         # which is not available until the first batch is seen.
         if self._writer is None:
             self._initialize_writer(batch_time)
-        self.writer.record_batch(
-            data=self._to_ndarray_mapping(data),
-            position_slices={
-                "time": slice(
-                    self._current_timestep,
-                    self._current_timestep + batch_time.sizes["time"],
-                )
-            },
+
+        # Compute spatial slices
+        spatial_dims = [
+            d for d in self.dims if d in ["lat", "lon", "face", "height", "width"]
+        ]
+        spatial_shape = tuple(len(self._horizontal_coords[d]) for d in spatial_dims)
+        slices = self._dist.get_local_slices(spatial_shape)
+        spatial_slices = dict(zip(spatial_dims, slices))
+
+        # Compute sample indices for the current rank
+        # We assume round-robin distribution of samples across data parallel ranks
+        total_samples = self.n_initial_conditions
+        global_sample_indices = range(
+            self._dist.data_parallel_rank,
+            total_samples,
+            self._dist.total_data_parallel_ranks,
         )
+
+        if len(global_sample_indices) != batch_time.sizes["sample"]:
+            # This might happen if the last batch is uneven or logic differs
+            # But InferenceDataset logic matches this.
+            # We trust we have correct number of samples.
+            if len(global_sample_indices) > batch_time.sizes["sample"]:
+                 # Should not happen if data loading is correct
+                 pass
+            pass
+
+        data_np = self._to_ndarray_mapping(data)
+        time_slice = slice(
+            self._current_timestep,
+            self._current_timestep + batch_time.sizes["time"],
+        )
+
+        for local_idx, global_sample_idx in enumerate(global_sample_indices):
+            if local_idx >= batch_time.sizes["sample"]:
+                break
+
+            # Slice data for the current sample
+            sample_data = {
+                k: v[local_idx : local_idx + 1] for k, v in data_np.items()
+            }
+
+            position_slices = {
+                "sample": slice(global_sample_idx, global_sample_idx + 1),
+                "time": time_slice,
+                **spatial_slices,
+            }
+
+            self.writer.record_batch(
+                data=sample_data,
+                position_slices=position_slices,
+            )
+
         self._current_timestep += batch_time.sizes["time"]
 
     def flush(self):
@@ -269,6 +315,7 @@ class SeparateICZarrWriterAdapter:
                     dims=("z_interface",),
                 )
         self._horizontal_coords = data_coords
+        self._dist = Distributed.get_instance()
 
     @property
     def writers(self) -> list[ZarrWriter]:
@@ -311,15 +358,44 @@ class SeparateICZarrWriterAdapter:
         if self._writers is None:
             self._initialize_writers(batch_time)
         vars = self.data_vars or list(data.keys())
-        position_slice = {
-            "time": slice(
-                self._current_timestep,
-                self._current_timestep + batch_time.sizes["time"],
-            )
-        }
-        for s in range(self.n_initial_conditions):
+
+        # Compute spatial slices
+        spatial_dims = [
+            d for d in self.dims if d in ["lat", "lon", "face", "height", "width"]
+        ]
+        spatial_shape = tuple(len(self._horizontal_coords[d]) for d in spatial_dims)
+        slices = self._dist.get_local_slices(spatial_shape)
+        spatial_slices = dict(zip(spatial_dims, slices))
+
+        # Compute sample indices for the current rank
+        total_samples = self.n_initial_conditions
+        global_sample_indices = range(
+            self._dist.data_parallel_rank,
+            total_samples,
+            self._dist.total_data_parallel_ranks,
+        )
+
+        data_np = {k: v.cpu().numpy() for k, v in data.items() if k in vars}
+        time_slice = slice(
+            self._current_timestep,
+            self._current_timestep + batch_time.sizes["time"],
+        )
+
+        for local_idx, s in enumerate(global_sample_indices):
+            if local_idx >= batch_time.sizes["sample"]:
+                break
+
+            position_slice = {
+                "time": time_slice,
+                **spatial_slices,
+            }
+            # For SeparateICZarrWriter, we don't slice "sample" because
+            # each writer corresponds to ONE sample.
+            # We assume dimensions of each file are (time, lat, lon).
+            # The input data has sample dim.
+
             self.writers[s].record_batch(
-                data={k: v.cpu().numpy()[s] for k, v in data.items() if k in vars},
+                data={k: v[local_idx] for k, v in data_np.items()},
                 position_slices=position_slice,
             )
         self._current_timestep += batch_time.sizes["time"]

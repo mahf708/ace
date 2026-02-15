@@ -13,9 +13,11 @@ from fme.core.dataset.data_typing import VariableMetadata
 from fme.core.dataset.time import TimeSlice
 from fme.core.typing_ import Slice
 
+from fme.core.distributed import Distributed
+
 from .dataset_metadata import DatasetMetadata
 from .monthly import MonthlyDataWriter
-from .raw import NetCDFWriterConfig, RawDataWriter
+from .raw import NetCDFWriterConfig, RawDataWriter, SpatialGatherWriter
 from .time_coarsen import (
     MonthlyCoarsenConfig,
     PairedTimeCoarsen,
@@ -402,25 +404,39 @@ class FileWriterConfig:
                     "netcdf output."
                 )
             if isinstance(self.time_coarsen, MonthlyCoarsenConfig):
-                raw_writer = MonthlyDataWriter(
-                    path=experiment_dir,
-                    label=self.label,
-                    n_samples=n_initial_conditions,
-                    save_names=self.names,
-                    variable_metadata=variable_metadata,
-                    coords=subselect_coords_,
-                    dataset_metadata=dataset_metadata,
-                )
+
+                def monthly_factory():
+                    return MonthlyDataWriter(
+                        path=experiment_dir,
+                        label=self.label,
+                        n_samples=n_initial_conditions,
+                        save_names=self.names,
+                        variable_metadata=variable_metadata,
+                        coords=subselect_coords_,
+                        dataset_metadata=dataset_metadata,
+                    )
+
+                raw_writer_factory = monthly_factory
             else:
-                raw_writer = RawDataWriter(
-                    path=experiment_dir,
-                    label=self.label,
-                    n_initial_conditions=n_initial_conditions,
-                    save_names=self.names,
-                    variable_metadata=variable_metadata,
-                    coords=subselect_coords_,
-                    dataset_metadata=dataset_metadata,
-                )
+
+                def raw_factory():
+                    return RawDataWriter(
+                        path=experiment_dir,
+                        label=self.label,
+                        n_initial_conditions=n_initial_conditions,
+                        save_names=self.names,
+                        variable_metadata=variable_metadata,
+                        coords=subselect_coords_,
+                        dataset_metadata=dataset_metadata,
+                    )
+
+                raw_writer_factory = raw_factory
+
+            dist = Distributed.get_instance()
+            if dist.comm_get_size("h") > 1 or dist.comm_get_size("w") > 1:
+                raw_writer = SpatialGatherWriter(raw_writer_factory)
+            else:
+                raw_writer = raw_writer_factory()
         writer = FileWriter(self, raw_writer, full_coords=coords)
         if isinstance(self.time_coarsen, TimeCoarsenConfig):
             return self.time_coarsen.build(writer)
