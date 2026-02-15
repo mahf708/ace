@@ -6,6 +6,7 @@ import torch
 import torch.linalg
 
 from fme.core.device import get_device
+from fme.core.distributed import Distributed
 from fme.core.ensemble import get_crps, get_energy_score
 from fme.core.gridded_ops import GriddedOperations
 from fme.core.normalizer import StandardNormalizer
@@ -128,10 +129,32 @@ class LpLoss(torch.nn.Module):
     def rel(self, x, y):
         num_examples = x.size()[0]
 
-        diff_norms = torch.linalg.norm(
-            x.reshape(num_examples, -1) - y.reshape(num_examples, -1), ord=self.p, dim=1
-        )
-        y_norms = torch.linalg.norm(y.reshape(num_examples, -1), ord=self.p, dim=1)
+        diff = x.reshape(num_examples, -1) - y.reshape(num_examples, -1)
+        y_flat = y.reshape(num_examples, -1)
+
+        if self.p == 1:
+            local_diff_pow = torch.abs(diff).sum(dim=1)
+            local_y_pow = torch.abs(y_flat).sum(dim=1)
+        elif self.p == 2:
+            local_diff_pow = (diff**2).sum(dim=1)
+            local_y_pow = (y_flat**2).sum(dim=1)
+        else:
+            local_diff_pow = (torch.abs(diff) ** self.p).sum(dim=1)
+            local_y_pow = (torch.abs(y_flat) ** self.p).sum(dim=1)
+
+        dist = Distributed.get_instance()
+        global_diff_pow = dist.reduce_group_sum(local_diff_pow, group_name="spatial")
+        global_y_pow = dist.reduce_group_sum(local_y_pow, group_name="spatial")
+
+        if self.p == 1:
+            diff_norms = global_diff_pow
+            y_norms = global_y_pow
+        elif self.p == 2:
+            diff_norms = torch.sqrt(global_diff_pow)
+            y_norms = torch.sqrt(global_y_pow)
+        else:
+            diff_norms = global_diff_pow ** (1.0 / self.p)
+            y_norms = global_y_pow ** (1.0 / self.p)
 
         return torch.mean(diff_norms / y_norms)
 

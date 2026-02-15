@@ -294,6 +294,10 @@ class LatLonOperations(GriddedOperations):
                 "Area weights must be longitudinally uniform, "
                 "as assumed for zonal mean."
             )
+        # Store global dimensions before slicing (needed for distributed SHT)
+        self._global_nlat = area_weights.shape[-2]
+        self._global_nlon = area_weights.shape[-1]
+
         dist = Distributed.get_instance()
         area_weights = area_weights[*dist.get_local_slices(area_weights.shape)]
         self._device_area = area_weights.to(get_device())
@@ -307,7 +311,23 @@ class LatLonOperations(GriddedOperations):
         return self._zonal_mean
 
     def _zonal_mean(self, data: torch.Tensor) -> torch.Tensor:
-        return data.nanmean(dim=self.HORIZONTAL_DIMS[1])
+        # data: (..., lat, lon)
+        # zonal mean over lon (last dim)
+        dim = self.HORIZONTAL_DIMS[1]
+
+        # Local sum and count
+        # Handle NaNs:
+        mask = ~torch.isnan(data)
+        data_filled = data.nan_to_num(0.0)
+
+        local_sum = data_filled.sum(dim=dim)
+        local_count = mask.sum(dim=dim)
+
+        dist = Distributed.get_instance()
+        global_sum = dist.reduce_group_sum(local_sum, group_name="w")
+        global_count = dist.reduce_group_sum(local_count, group_name="w")
+
+        return global_sum / global_count
 
     def _get_area_weights(
         self,
@@ -335,9 +355,11 @@ class LatLonOperations(GriddedOperations):
         name: str | None = None,
     ) -> torch.Tensor:
         area_weights = self._get_area_weights(data, name)
-        return metrics.weighted_sum(
+        local_sum = metrics.weighted_sum(
             data, area_weights, dim=self.HORIZONTAL_DIMS, keepdim=keepdim
         )
+        dist = Distributed.get_instance()
+        return dist.reduce_group_sum(local_sum, group_name="spatial")
 
     def area_weighted_mean(
         self,
@@ -346,9 +368,24 @@ class LatLonOperations(GriddedOperations):
         name: str | None = None,
     ) -> torch.Tensor:
         area_weights = self._get_area_weights(data, name)
-        return metrics.weighted_mean(
-            data, area_weights, dim=self.HORIZONTAL_DIMS, keepdim=keepdim
+        expanded_weights = area_weights.expand(data.shape)
+
+        # remove potential "expected NaNs", i.e. any NaNs with 0 weight
+        data = data.where(expanded_weights != 0.0, 0.0)
+
+        local_numerator = (data * expanded_weights).sum(
+            dim=self.HORIZONTAL_DIMS, keepdim=keepdim
         )
+        local_denominator = expanded_weights.sum(
+            dim=self.HORIZONTAL_DIMS, keepdim=keepdim
+        )
+
+        dist = Distributed.get_instance()
+        global_numerator = dist.reduce_group_sum(local_numerator, group_name="spatial")
+        global_denominator = dist.reduce_group_sum(
+            local_denominator, group_name="spatial"
+        )
+        return global_numerator / global_denominator
 
     def regional_area_weighted_mean(
         self,
@@ -358,12 +395,24 @@ class LatLonOperations(GriddedOperations):
         name: str | None = None,
     ) -> torch.Tensor:
         regional_area_weights = self._get_area_weights(data, name, regional_weights)
-        return metrics.weighted_mean(
-            data,
-            regional_area_weights,
-            dim=self.HORIZONTAL_DIMS,
-            keepdim=keepdim,
+        expanded_weights = regional_area_weights.expand(data.shape)
+
+        # remove potential "expected NaNs", i.e. any NaNs with 0 weight
+        data = data.where(expanded_weights != 0.0, 0.0)
+
+        local_numerator = (data * expanded_weights).sum(
+            dim=self.HORIZONTAL_DIMS, keepdim=keepdim
         )
+        local_denominator = expanded_weights.sum(
+            dim=self.HORIZONTAL_DIMS, keepdim=keepdim
+        )
+
+        dist = Distributed.get_instance()
+        global_numerator = dist.reduce_group_sum(local_numerator, group_name="spatial")
+        global_denominator = dist.reduce_group_sum(
+            local_denominator, group_name="spatial"
+        )
+        return global_numerator / global_denominator
 
     def area_weighted_gradient_magnitude_percent_diff(
         self,
@@ -380,16 +429,36 @@ class LatLonOperations(GriddedOperations):
         )
 
     def get_real_sht(self) -> torch_harmonics.RealSHT:
+        dist = Distributed.get_instance()
+        if dist.comm_get_size("spatial") > 1:
+            import torch_harmonics.distributed as thd
+
+            return thd.DistributedRealSHT(
+                nlat=self._global_nlat,
+                nlon=self._global_nlon,
+                grid=self._grid,
+            ).to(get_device())
+
         return torch_harmonics.RealSHT(
-            nlat=self._cpu_area.shape[-2],
-            nlon=self._cpu_area.shape[-1],
+            nlat=self._global_nlat,
+            nlon=self._global_nlon,
             grid=self._grid,
         ).to(get_device())
 
     def get_real_isht(self) -> torch_harmonics.InverseRealSHT:
+        dist = Distributed.get_instance()
+        if dist.comm_get_size("spatial") > 1:
+            import torch_harmonics.distributed as thd
+
+            return thd.DistributedInverseRealSHT(
+                nlat=self._global_nlat,
+                nlon=self._global_nlon,
+                grid=self._grid,
+            ).to(get_device())
+
         return torch_harmonics.InverseRealSHT(
-            nlat=self._cpu_area.shape[-2],
-            nlon=self._cpu_area.shape[-1],
+            nlat=self._global_nlat,
+            nlon=self._global_nlon,
             grid=self._grid,
         ).to(get_device())
 

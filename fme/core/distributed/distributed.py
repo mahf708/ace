@@ -344,5 +344,24 @@ class Distributed:
     def comm_get_rank(self, key: str):
         return self._distributed.comm_get_rank(key)
 
+    def reduce_group_sum(self, tensor: torch.Tensor, group_name: str) -> torch.Tensor:
+        """
+        Reduce a tensor by summing across the specified group.
+
+        Modifies the input tensor in-place as a side effect.
+        """
+        try:
+            group_size = self.comm_get_size(group_name)
+        except Exception:
+            group_size = 1
+
+        if group_size > 1:
+            group = self.comm_get_group(group_name)
+            if group is not None:
+                torch.distributed.all_reduce(
+                    tensor, group=group, op=torch.distributed.ReduceOp.SUM
+                )
+        return tensor
+
 
 singleton: Distributed | None = None

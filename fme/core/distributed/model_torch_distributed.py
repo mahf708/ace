@@ -58,6 +58,18 @@ class ModelTorchDistributed(DistributedBackend):
             assert comm.get_size("h") == h_parallel_size
             assert comm.get_size("w") == w_parallel_size
 
+            # Initialize torch_harmonics.distributed if available
+            try:
+                import torch_harmonics.distributed as thd
+
+                polar_group = None if (comm.get_size("h") == 1) else comm.get_group("h")
+                azimuth_group = (
+                    None if (comm.get_size("w") == 1) else comm.get_group("w")
+                )
+                thd.init(polar_group, azimuth_group)
+            except ImportError:
+                pass
+
             self.world_size = comm.get_world_size()
             self._rank = comm.get_world_rank()
             self._device_id = comm.get_local_rank()

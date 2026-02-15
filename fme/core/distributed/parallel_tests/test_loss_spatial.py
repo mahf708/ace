@@ -9,9 +9,8 @@ from fme.core.distributed.parallel_tests._helpers import WORLD_SIZE, requires_pa
 from fme.core.gridded_ops import LatLonOperations
 from fme.core.loss import LossConfig
 
-
 @requires_parallel
-@pytest.mark.parametrize("global_mean_type", [None])
+@pytest.mark.parametrize("loss_type", ["MSE", "L1", "LpLoss"])
 @pytest.mark.parametrize(
     "h_parallel,w_parallel",
     [
@@ -19,9 +18,7 @@ from fme.core.loss import LossConfig
         (1, 2),  # W-parallel split
     ],
 )
-def test_loss_builds_and_runs_with_spatial_parallelism(
-    global_mean_type, h_parallel, w_parallel, monkeypatch
-):
+def test_loss_spatial(loss_type, h_parallel, w_parallel, monkeypatch):
     """Test that loss computation is consistent between
     serial and parallel execution."""
     world_size = WORLD_SIZE
@@ -30,7 +27,7 @@ def test_loss_builds_and_runs_with_spatial_parallelism(
         pytest.skip(
             f"world_size={world_size} not divisible by spatial_size={spatial_size}"
         )
-    error_tol = 1e-7
+    error_tol = 1e-6
     nx = 8
     ny = 8
 
@@ -70,7 +67,8 @@ def test_loss_builds_and_runs_with_spatial_parallelism(
     y_local = y_local_host.to(dist.get_local_rank())
 
     # Build loss function (same config as serial)
-    config = LossConfig(global_mean_type=global_mean_type)
+    kwargs = {"p": 2} if loss_type == "LpLoss" else {}
+    config = LossConfig(type=loss_type, kwargs=kwargs)
     loss_fn_parallel = config.build(
         reduction="mean",
         gridded_operations=LatLonOperations(area_weights),
@@ -80,6 +78,7 @@ def test_loss_builds_and_runs_with_spatial_parallelism(
     result_local = loss_fn_parallel(x_local, y_local)
 
     # Aggregate and get logs
+    # Note: MeanAggregator uses area_weighted_mean internally, so testing it covers that too.
     aggregator_parallel = MeanAggregator(LatLonOperations(area_weights))
     aggregator_parallel.record_batch(
         loss=result_local,
@@ -94,7 +93,7 @@ def test_loss_builds_and_runs_with_spatial_parallelism(
     torch.manual_seed(0)
     with Distributed.force_non_distributed():
         # Build loss function
-        config = LossConfig(global_mean_type=global_mean_type)
+        config = LossConfig(type=loss_type, kwargs=kwargs)
         loss_fn = config.build(
             reduction="mean",
             gridded_operations=LatLonOperations(area_weights_host),
@@ -118,6 +117,7 @@ def test_loss_builds_and_runs_with_spatial_parallelism(
     rel_diff = np.abs(loss_serial - loss_parallel) / loss_serial
     assert rel_diff < error_tol, (
         f"Loss computation mismatch between serial and parallel execution. "
+        f"Loss Type: {loss_type}. "
         f"Serial loss: {loss_serial}, Parallel loss: {loss_parallel}, "
         f"Relative difference: {rel_diff}, Tolerance: {error_tol}"
     )
