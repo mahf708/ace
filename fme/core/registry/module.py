@@ -91,8 +91,13 @@ class Module:
             label_encoder_state = self._label_encoding.get_state()
         else:
             label_encoder_state = None
+
+        from fme.core.distributed.checkpointing import gather_sharded_state_dict
+
+        state_dict = gather_sharded_state_dict(self._module)
+
         return {
-            **self._module.state_dict(),
+            **state_dict,
             "label_encoding": label_encoder_state,
         }
 
@@ -106,6 +111,11 @@ class Module:
             else:
                 self._label_encoding.conform_to_state(state.pop("label_encoding"))
         state.pop("label_encoding", None)
+
+        from fme.core.distributed.checkpointing import scatter_sharded_state_dict
+
+        state = scatter_sharded_state_dict(state, self._module)
+
         self._module.load_state_dict(state)
 
     def wrap_module(self, callable: Callable[[nn.Module], nn.Module]) -> "Module":

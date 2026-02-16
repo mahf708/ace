@@ -88,6 +88,7 @@ class EMATracker:
         if decay < 0.0 or decay > 1.0:
             raise ValueError("Decay must be between 0 and 1")
 
+        self._model = model
         self._module_name_to_ema_name = {}
         self.decay = torch.tensor(decay, dtype=torch.float32).to(get_device())
         self._faster_decay_at_start = faster_decay_at_start
@@ -198,14 +199,31 @@ class EMATracker:
         Returns:
             The state of the EMA tracker.
         """
+        from fme.core.distributed.checkpointing import gather_sharded_state_dict
+
+        # Map ema names back to real parameter names for gathering
+        ema_name_to_real_name = {
+            v: k for k, v in self._module_name_to_ema_name.items()
+        }
+        proper_state_dict = {}
+        for ema_name, tensor in self._ema_params.items():
+            real_name = ema_name_to_real_name.get(ema_name)
+            if real_name:
+                proper_state_dict[real_name] = tensor
+
+        gathered_dict = gather_sharded_state_dict(self._model, proper_state_dict)
+
+        gathered_ema_params = {}
+        for real_name, tensor in gathered_dict.items():
+            ema_name = self._module_name_to_ema_name[real_name]
+            gathered_ema_params[ema_name] = tensor.cpu()
+
         return {
             "decay": self.decay,
             "num_updates": self.num_updates,
             "faster_decay_at_start": self._faster_decay_at_start,
             "module_name_to_ema_name": self._module_name_to_ema_name,
-            "ema_params": {
-                name: param.clone().detach() for name, param in self._ema_params.items()
-            },
+            "ema_params": gathered_ema_params,
         }
 
     @classmethod
@@ -225,7 +243,25 @@ class EMATracker:
         ema.num_updates = state["num_updates"]
         ema._module_name_to_ema_name = state["module_name_to_ema_name"]
         if "ema_params" in state:
-            ema._ema_params = state["ema_params"]
+            from fme.core.distributed.checkpointing import scatter_sharded_state_dict
+
+            ema_name_to_real_name = {
+                v: k for k, v in ema._module_name_to_ema_name.items()
+            }
+            proper_state_dict = {}
+            for ema_name, tensor in state["ema_params"].items():
+                real_name = ema_name_to_real_name.get(ema_name)
+                if real_name:
+                    proper_state_dict[real_name] = tensor
+
+            scattered_dict = scatter_sharded_state_dict(proper_state_dict, model)
+
+            scattered_ema_params = {}
+            for real_name, tensor in scattered_dict.items():
+                ema_name = ema._module_name_to_ema_name[real_name]
+                scattered_ema_params[ema_name] = tensor
+
+            ema._ema_params = scattered_ema_params
         else:
             logging.warning("EMA params not found in state and will not be restored.")
         return ema

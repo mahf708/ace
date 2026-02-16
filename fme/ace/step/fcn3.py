@@ -27,6 +27,11 @@ from fme.core.step.single_module import step_with_adjustments
 from fme.core.step.step import StepABC, StepConfigABC, StepSelector
 from fme.core.typing_ import TensorDict, TensorMapping
 
+try:
+    from fme.core.distributed import model_torch_distributed_comm as comm
+except ImportError:
+    comm = None
+
 DEFAULT_TIMESTEP = datetime.timedelta(hours=6)
 DEFAULT_ENCODED_TIMESTEP = encode_timestep(DEFAULT_TIMESTEP)
 
@@ -295,6 +300,14 @@ class FCN3StepConfig(StepConfigABC):
         dataset_info: DatasetInfo,
         init_weights: Callable[[list[nn.Module]], None],
     ) -> "FCN3Step":
+        if comm is not None and (comm.get_size("h") > 1 or comm.get_size("w") > 1):
+            H, W = dataset_info.img_shape
+            if H % comm.get_size("h") != 0 or W % comm.get_size("w") != 0:
+                raise ValueError(
+                    f"Image shape ({H}, {W}) must be divisible by parallel size "
+                    f"({comm.get_size('h')}, {comm.get_size('w')})"
+                )
+
         logging.info("Initializing stepper from provided config")
         corrector = dataset_info.vertical_coordinate.build_corrector(
             config=self.corrector,

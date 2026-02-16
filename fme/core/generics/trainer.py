@@ -299,8 +299,7 @@ class Trainer:
             param.requires_grad = False
 
     def _should_save_checkpoints(self) -> bool:
-        dist = Distributed.get_instance()
-        return self.config.save_checkpoint and dist.is_root()
+        return self.config.save_checkpoint
 
     def train(self):
         logging.info("Starting Training Loop...")
@@ -400,7 +399,8 @@ class Trainer:
             wandb.log(all_logs, step=self.num_batches_seen)
 
             if self._should_save_checkpoints():
-                logging.info(f"Saving checkpoints for epoch {self._epochs_trained}")
+                if Distributed.get_instance().is_root():
+                    logging.info(f"Saving checkpoints for epoch {self._epochs_trained}")
                 self.save_all_checkpoints(valid_loss, inference_error)
 
     def _log_first_batch_metrics(self):
@@ -512,13 +512,14 @@ class Trainer:
         return aggregator.get_logs(label="train")
 
     def _save_restart_checkpoints(self):
-        logging.info(
-            f"Saving latest checkpoint model trained for {self._epochs_trained} "
-            f"complete epochs and {self._current_epoch_num_batches_seen} additional "
-            f"batches, or {self.num_batches_seen} total batches, with "
-            f"best_validation_loss {self._best_validation_loss} and "
-            f"best_inference_error {self._best_inference_error}"
-        )
+        if Distributed.get_instance().is_root():
+            logging.info(
+                f"Saving latest checkpoint model trained for {self._epochs_trained} "
+                f"complete epochs and {self._current_epoch_num_batches_seen} additional "
+                f"batches, or {self.num_batches_seen} total batches, with "
+                f"best_validation_loss {self._best_validation_loss} and "
+                f"best_inference_error {self._best_inference_error}"
+            )
         self.save_checkpoint(
             self.paths.latest_checkpoint_path,
             include_optimization=True,
@@ -604,8 +605,10 @@ class Trainer:
         checkpoint_path: str,
         include_optimization: bool = False,
     ):
-        if not Distributed.get_instance().is_root():
-            raise RuntimeError("Only the root process should save checkpoints")
+        # Checkpoint saving is collective (all ranks gather state),
+        # but only root writes to disk.
+        dist = Distributed.get_instance()
+
         # save to a temporary file in case we get pre-empted during save
         temporary_location = os.path.join(
             os.path.dirname(checkpoint_path), f".{uuid.uuid4()}.tmp"
@@ -624,10 +627,12 @@ class Trainer:
                 data["optimization"] = self.optimization.get_state()
             else:
                 data["ema"].pop("ema_params")  # don't need if not saving optimization
-            torch.save(data, temporary_location)
-            os.replace(temporary_location, checkpoint_path)
+
+            if dist.is_root():
+                torch.save(data, temporary_location)
+                os.replace(temporary_location, checkpoint_path)
         finally:
-            if os.path.exists(temporary_location):
+            if dist.is_root() and os.path.exists(temporary_location):
                 os.remove(temporary_location)
 
     def restore_checkpoint(self, checkpoint_path):
@@ -657,23 +662,25 @@ class Trainer:
         with best_checkpoint_context():
             save_best_checkpoint = False
             if valid_loss <= self._best_validation_loss:
-                logging.info(
-                    "Saving lowest validation loss checkpoint to "
-                    f"{self.paths.best_checkpoint_path}"
-                )
+                if Distributed.get_instance().is_root():
+                    logging.info(
+                        "Saving lowest validation loss checkpoint to "
+                        f"{self.paths.best_checkpoint_path}"
+                    )
                 self._best_validation_loss = valid_loss
                 save_best_checkpoint = True  # wait until inference error is updated
             if inference_error is not None and (
                 inference_error <= self._best_inference_error
             ):
-                logging.info(
-                    f"Epoch inference error ({inference_error}) is lower than "
-                    f"previous best inference error ({self._best_inference_error})."
-                )
-                logging.info(
-                    "Saving lowest inference error checkpoint to "
-                    f"{self.paths.best_inference_checkpoint_path}"
-                )
+                if Distributed.get_instance().is_root():
+                    logging.info(
+                        f"Epoch inference error ({inference_error}) is lower than "
+                        f"previous best inference error ({self._best_inference_error})."
+                    )
+                    logging.info(
+                        "Saving lowest inference error checkpoint to "
+                        f"{self.paths.best_inference_checkpoint_path}"
+                    )
                 self._best_inference_error = inference_error
                 self.save_checkpoint(self.paths.best_inference_checkpoint_path)
 
@@ -684,10 +691,11 @@ class Trainer:
                             self._epochs_trained
                         )
                     )
-                    logging.info(
-                        "Saving best inference checkpoint for epoch "
-                        f"{self._epochs_trained} to {best_inference_epoch_path}"
-                    )
+                    if Distributed.get_instance().is_root():
+                        logging.info(
+                            "Saving best inference checkpoint for epoch "
+                            f"{self._epochs_trained} to {best_inference_epoch_path}"
+                        )
                     self.save_checkpoint(best_inference_epoch_path)
             if save_best_checkpoint:
                 self.save_checkpoint(self.paths.best_checkpoint_path)
@@ -698,14 +706,18 @@ class Trainer:
             ema_epoch_checkpoint_path = self.paths.ema_epoch_checkpoint_path(
                 self._epochs_trained
             )
-            logging.info(f"Saving EMA epoch checkpoint to {ema_epoch_checkpoint_path}")
+            if Distributed.get_instance().is_root():
+                logging.info(
+                    f"Saving EMA epoch checkpoint to {ema_epoch_checkpoint_path}"
+                )
             with self._ema_context():
                 self.save_checkpoint(ema_epoch_checkpoint_path)
         if self._epoch_checkpoint_enabled(self._epochs_trained):
             epoch_checkpoint_path = self.paths.epoch_checkpoint_path(
                 self._epochs_trained
             )
-            logging.info(f"Saving epoch checkpoint to {epoch_checkpoint_path}")
+            if Distributed.get_instance().is_root():
+                logging.info(f"Saving epoch checkpoint to {epoch_checkpoint_path}")
             self.save_checkpoint(epoch_checkpoint_path)
 
 

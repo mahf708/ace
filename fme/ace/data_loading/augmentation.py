@@ -32,6 +32,16 @@ class AugmentationConfig:
 
     def build_modifier(self) -> "BatchModifierABC":
         if self.rotate_probability > 0.0:
+            try:
+                from fme.core.distributed import model_torch_distributed_comm as comm
+
+                if comm.get_size("h") > 1 or comm.get_size("w") > 1:
+                    raise ValueError(
+                        "Data augmentation (rotate) is not yet supported with spatial parallelism"
+                    )
+            except ImportError:
+                pass
+
             return RotateModifier(
                 self.rotate_probability, self.additional_directional_names
             )

@@ -14,6 +14,11 @@ from fme.core.generics.optimization import OptimizationABC
 from fme.core.scheduler import SchedulerConfig, SequentialSchedulerConfig
 from fme.core.typing_ import TensorDict, TensorMapping
 
+try:
+    from fme.core.distributed import model_torch_distributed_comm as comm
+except ImportError:
+    comm = None
+
 
 class Checkpoint:
     def __init__(self, kwargs: Mapping[str, Any]):
@@ -185,18 +190,53 @@ class Optimization(OptimizationABC):
     def step_weights(self):
         if not self._use_gradient_accumulation:
             self._backward(self._accumulated_loss)
+        self._sync_shared_gradients()
         self._step_weights()
         self.optimizer.zero_grad()
         if self.gscaler is not None:
             self.gscaler.update()
         self._accumulated_loss = torch.tensor(0.0, device=get_device())
 
+    def _sync_shared_gradients(self):
+        # If physicsnemo is not available or we are not in a spatial parallel run, skip
+        if comm is None:
+            return
+
+        # We only need manual sync if we have spatial parallelism (h or w > 1).
+        # comm.get_size("h") defaults to 1 if not initialized.
+        # But we should check if distributed is initialized.
+        if not (comm.is_distributed("h") or comm.is_distributed("w")):
+            return
+
+        # Iterate over all parameters
+        for group in self.optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                # Check for shared parameter annotation
+                if hasattr(p, "is_shared_mp"):
+                    for group_name in p.is_shared_mp:
+                        # We only need to sync across spatial groups here.
+                        # Data parallelism is handled by DDP.
+                        # "spatial" covers "h" and "w".
+                        if group_name in ["spatial", "h", "w"]:
+                            # Ensure the group exists and has size > 1
+                            if comm.get_size(group_name) > 1:
+                                torch.distributed.all_reduce(
+                                    p.grad,
+                                    group=comm.get_group(group_name),
+                                    op=torch.distributed.ReduceOp.AVG,
+                                )
+
     def get_state(self):
         """
         Returns state as a serializable data structure.
         """
+        from fme.core.distributed.checkpointing import gather_optimizer_state_dict
+
         state = {
-            "optimizer_state_dict": self.optimizer.state_dict(),
+            "optimizer_state_dict": gather_optimizer_state_dict(self.optimizer),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "gscaler_state_dict": (
                 self.gscaler.state_dict() if self.gscaler is not None else None
@@ -208,7 +248,12 @@ class Optimization(OptimizationABC):
         """
         Loads state from a serializable data structure.
         """
-        self.optimizer.load_state_dict(state["optimizer_state_dict"])
+        from fme.core.distributed.checkpointing import scatter_optimizer_state_dict
+
+        optimizer_state_dict = scatter_optimizer_state_dict(
+            state["optimizer_state_dict"], self.optimizer
+        )
+        self.optimizer.load_state_dict(optimizer_state_dict)
         self.scheduler.load_state_dict(state["scheduler_state_dict"])
         if self.gscaler is not None:
             self.gscaler.load_state_dict(state["gscaler_state_dict"])
@@ -260,6 +305,10 @@ class OptimizationConfig:
             )
 
     def build(self, modules: torch.nn.ModuleList, max_epochs: int) -> Optimization:
+        if self.enable_automatic_mixed_precision and comm is not None:
+            if comm.get_size("h") > 1 or comm.get_size("w") > 1:
+                raise ValueError("AMP is not yet supported with spatial parallelism.")
+
         parameters = itertools.chain(*[module.parameters() for module in modules])
         return Optimization(
             parameters=parameters,

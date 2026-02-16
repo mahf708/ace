@@ -130,6 +130,17 @@ class SingleModuleStepperConfig:
     residual_prediction: bool = False
 
     def __post_init__(self):
+        try:
+            from fme.core.distributed import model_torch_distributed_comm as comm
+
+            if comm.get_size("h") > 1 or comm.get_size("w") > 1:
+                raise ValueError(
+                    "SingleModuleStep does not support spatial parallelism. "
+                    "Use FCN3Step (type='FCN3') instead."
+                )
+        except ImportError:
+            pass
+
         for name in self.next_step_forcing_names:
             if name not in self.in_names:
                 raise ValueError(

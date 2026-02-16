@@ -168,10 +168,16 @@ class ModelTorchDistributed(DistributedBackend):
                 output_device = [self._device_id]
             else:
                 output_device = None
+
+            process_group = None
+            if _spatial_parallelism_enabled():
+                process_group = comm.get_group("data")
+
             return DistributedDataParallel(
                 SyncBatchNorm.convert_sync_batchnorm(module),
                 device_ids=self._device_ids,
                 output_device=output_device,
+                process_group=process_group,
             )
         return DummyWrapper(module)
 
@@ -187,11 +193,9 @@ class ModelTorchDistributed(DistributedBackend):
 
 
 def _spatial_parallelism_enabled() -> bool:
-    h_parallel_size = int(os.environ.get("H_PARALLEL_SIZE", 1))
-    w_parallel_size = int(os.environ.get("W_PARALLEL_SIZE", 1))
-    if (h_parallel_size > 1) or (w_parallel_size > 1):
-        return True
-    return False
+    if comm is None:
+        return False
+    return comm.get_size("h") > 1 or comm.get_size("w") > 1
 
 
 def _get_local_slices(tensor_shape):
