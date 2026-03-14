@@ -3,12 +3,7 @@ import torch
 
 from fme.core.device import get_device
 from fme.core.distributed import Distributed
-from fme.core.rand import (
-    randn_like,
-    randn_spatial,
-    set_seed,
-    use_global_random_state,
-)
+from fme.core.rand import randn_like, randn_spatial, set_seed, use_global_random_state
 
 
 def test_set_seed_np_rand():
