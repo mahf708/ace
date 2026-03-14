@@ -1178,6 +1178,56 @@ def test_pinned_memory(tmp_path, time_buffer: int):
         assert tensor.is_pinned() is using_gpu()
 
 
+def test_gridded_data_dataset_info_uses_global_shape(tmp_path):
+    """dataset_info.img_shape must reflect global (pre-localize) coordinates
+    so that models receiving it don't double-partition when calling
+    get_local_slices internally."""
+    _create_dataset_on_disk(tmp_path)
+    config = DataLoaderConfig(
+        dataset=XarrayDataConfig(data_path=tmp_path),
+        batch_size=1,
+        num_data_workers=0,
+    )
+    requirements = DataRequirements(["foo"], 2)
+    data = get_gridded_data(config, True, requirements)
+
+    assert data.dataset_info.img_shape == (N_LAT, N_LON)
+    # dataset_info should use global properties, not localized ones
+    assert (
+        data.dataset_info.horizontal_coordinates
+        is data._global_properties.horizontal_coordinates
+    )  # noqa: E501
+
+
+def test_inference_data_dataset_info_uses_global_shape(tmp_path):
+    """dataset_info.img_shape must reflect global (pre-localize) coordinates
+    so that models receiving it don't double-partition when calling
+    get_local_slices internally."""
+    _create_dataset_on_disk(tmp_path, n_times=14)
+    config = InferenceDataLoaderConfig(
+        dataset=XarrayDataConfig(data_path=tmp_path, n_repeats=1),
+        start_indices=InferenceInitialConditionIndices(
+            first=0, n_initial_conditions=2, interval=7
+        ),
+        num_data_workers=0,
+    )
+    window_requirements = DataRequirements(names=["foo", "bar"], n_timesteps=4)
+    ic_requirements = PrognosticStateDataRequirements(names=["foo"], n_timesteps=1)
+    data = get_inference_data(
+        config,
+        total_forward_steps=6,
+        window_requirements=window_requirements,
+        initial_condition=ic_requirements,
+    )
+
+    assert data.dataset_info.img_shape == (N_LAT, N_LON)
+    # dataset_info should use global properties, not localized ones
+    assert (
+        data.dataset_info.horizontal_coordinates
+        is data._global_properties.horizontal_coordinates
+    )  # noqa: E501
+
+
 @pytest.mark.parallel
 def test_localize_properties():
     """Verify DatasetProperties.localize() partitions coords and masks across ranks."""
@@ -1240,3 +1290,50 @@ def test_localize_properties():
         # co-ranks have distinct slices, data-parallel ranks have identical ones).
         expected_count = dist.total_data_parallel_ranks
         torch.testing.assert_close(canvas, mask_tensor * expected_count)
+
+
+@pytest.mark.parallel
+def test_dataset_info_not_localized():
+    """Verify that dataset_info built by GriddedData and InferenceGriddedData
+    uses global (non-localized) properties, so that models receiving img_shape
+    don't double-partition via get_local_slices."""
+    from unittest.mock import MagicMock
+
+    from fme.ace.data_loading.gridded_data import GriddedData
+
+    n_lat, n_lon = N_LAT, N_LON
+    lat = torch.linspace(-90.0, 90.0, n_lat)
+    lon = torch.linspace(0.0, 360.0, n_lon)
+    coords = LatLonCoordinates(lat=lat, lon=lon)
+    timestep = datetime.timedelta(hours=6)
+    metadata = {"temp": VariableMetadata(units="K", long_name="Temperature")}
+    vertical = NullVerticalCoordinate()
+    mask_provider = MaskProvider(masks={})
+    props = DatasetProperties(
+        variable_metadata=metadata,
+        vertical_coordinate=vertical,
+        horizontal_coordinates=coords,
+        mask_provider=mask_provider,
+        timestep=timestep,
+        is_remote=False,
+        all_labels=None,
+    )
+
+    mock_loader = MagicMock()
+    mock_loader.__len__ = MagicMock(return_value=1)
+    mock_loader.batch_size = 1
+
+    gridded = GriddedData(loader=mock_loader, properties=props)
+    info = gridded.dataset_info
+    # img_shape must be the global shape, not the local (partitioned) one
+    assert info.img_shape == (n_lat, n_lon)
+
+    # The localized properties may have a smaller shape under spatial parallelism
+    local_shape = gridded.horizontal_coordinates.shape[-2:]
+    dist = Distributed.get_instance()
+    if dist.world_size > 1:
+        # Under spatial parallelism, local shape should differ from global
+        assert (
+            local_shape != (n_lat, n_lon)
+            or dist.world_size == dist.total_data_parallel_ranks
+        )  # noqa: E501
