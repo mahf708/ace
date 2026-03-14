@@ -8,6 +8,7 @@ import torch
 from fme.ace.registry.registry import ModuleConfig, ModuleSelector
 from fme.core.dataset_info import DatasetInfo
 from fme.core.distributed.distributed import Distributed
+from fme.core.rand import randn_spatial
 from fme.core.models.conditional_sfno.sfnonet import (
     Context,
     ContextConfig,
@@ -101,7 +102,7 @@ class NoiseConditionedSFNO(torch.nn.Module):
                 device=x.device,
             )
         elif self.noise_type == "gaussian":
-            noise = torch.randn(
+            noise = randn_spatial(
                 [x.shape[0], self.embed_dim, *x.shape[-2:]],
                 device=x.device,
                 dtype=x.dtype,
