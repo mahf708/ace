@@ -8,7 +8,6 @@ import torch
 from fme.ace.registry.registry import ModuleConfig, ModuleSelector
 from fme.core.dataset_info import DatasetInfo
 from fme.core.distributed.distributed import Distributed
-from fme.core.rand import randn_spatial
 from fme.core.models.conditional_sfno.sfnonet import (
     Context,
     ContextConfig,
@@ -17,6 +16,7 @@ from fme.core.models.conditional_sfno.sfnonet import (
 from fme.core.models.conditional_sfno.sfnonet import (
     SphericalFourierNeuralOperatorNet as ConditionalSFNO,
 )
+from fme.core.rand import randn_spatial
 
 
 def isotropic_noise(
