@@ -164,7 +164,9 @@ class TestGetLocalSpatialShapeValidation:
 
     def test_raises_on_indivisible_height(self):
         stub = self._make_stub(h_size=3, w_size=1)
-        with pytest.raises(ValueError, match="spatial height 10 is not evenly divisible"):
+        with pytest.raises(
+            ValueError, match="spatial height 10 is not evenly divisible"
+        ):
             stub._get_local_spatial_shape(10, 6)
 
     def test_raises_on_indivisible_width(self):
