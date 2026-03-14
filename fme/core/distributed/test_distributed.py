@@ -6,6 +6,7 @@ import torch.multiprocessing as mp
 
 from fme import get_device
 from fme.core.distributed import Distributed
+from fme.core.distributed.model_torch_distributed import ModelTorchDistributed
 from fme.core.distributed.torch_distributed import (
     _gather_irregular,
     _pad_tensor_at_end,
@@ -147,3 +148,32 @@ def test_gather_irregular():
     assert all(
         shape == gathered_nonscalar_shapes[0] for shape in gathered_nonscalar_shapes
     )
+
+
+class TestGetLocalSpatialShapeValidation:
+    """Test that _get_local_spatial_shape raises on indivisible spatial dims."""
+
+    def _make_stub(self, h_size: int, w_size: int):
+        """Create a stub with the attributes needed by _get_local_spatial_shape."""
+        stub = object.__new__(ModelTorchDistributed)
+        stub._h_size = h_size
+        stub._w_size = w_size
+        stub._h_rank = 0
+        stub._w_rank = 0
+        return stub
+
+    def test_raises_on_indivisible_height(self):
+        stub = self._make_stub(h_size=3, w_size=1)
+        with pytest.raises(ValueError, match="spatial height 10 is not evenly divisible"):
+            stub._get_local_spatial_shape(10, 6)
+
+    def test_raises_on_indivisible_width(self):
+        stub = self._make_stub(h_size=1, w_size=4)
+        with pytest.raises(ValueError, match="spatial width 6 is not evenly divisible"):
+            stub._get_local_spatial_shape(8, 6)
+
+    def test_passes_on_divisible_dims(self):
+        stub = self._make_stub(h_size=2, w_size=3)
+        h_slice, w_slice = stub._get_local_spatial_shape(10, 6)
+        assert h_slice == slice(0, 5)
+        assert w_slice == slice(0, 2)

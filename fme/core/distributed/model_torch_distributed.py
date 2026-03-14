@@ -167,7 +167,23 @@ class ModelTorchDistributed(DistributedBackend):
 
         Returns:
             tuple[slice, slice]: Slices for the local height and width.
+
+        Raises:
+            ValueError: If h or w is not evenly divisible by the
+                corresponding spatial decomposition size.
         """
+        if h % self._h_size != 0:
+            raise ValueError(
+                f"spatial height {h} is not evenly divisible by "
+                f"h_size={self._h_size}; uneven spatial decomposition "
+                f"is not currently supported"
+            )
+        if w % self._w_size != 0:
+            raise ValueError(
+                f"spatial width {w} is not evenly divisible by "
+                f"w_size={self._w_size}; uneven spatial decomposition "
+                f"is not currently supported"
+            )
         from torch_harmonics.distributed import compute_split_shapes
 
         h_shapes = compute_split_shapes(h, self._h_size)
