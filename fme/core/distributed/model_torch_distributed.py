@@ -349,51 +349,6 @@ class ModelTorchDistributed(DistributedBackend):
             local_weight_sum
         )
 
-    def _gather_along_dim(
-        self,
-        tensor: torch.Tensor,
-        dim: int,
-        group: torch.distributed.ProcessGroup,
-        group_size: int,
-    ) -> torch.Tensor:
-        """All-gather tensor slices along ``dim`` within ``group``."""
-        if group_size == 1:
-            return tensor
-
-        # Communicate local sizes to handle uneven splits.
-        local_size = torch.tensor(
-            [tensor.shape[dim]], device=tensor.device, dtype=torch.long
-        )
-        all_sizes = [torch.empty_like(local_size) for _ in range(group_size)]
-        torch.distributed.all_gather(all_sizes, local_size, group=group)
-        sizes = [s.item() for s in all_sizes]
-
-        max_size = max(sizes)
-
-        # Pad to the largest slice so all_gather receives uniform shapes.
-        if tensor.shape[dim] < max_size:
-            pad_shape = list(tensor.shape)
-            pad_shape[dim] = max_size - tensor.shape[dim]
-            tensor = torch.cat([tensor, tensor.new_zeros(pad_shape)], dim=dim)
-
-        chunks = [torch.empty_like(tensor) for _ in range(group_size)]
-        torch.distributed.all_gather(chunks, tensor, group=group)
-
-        # Trim each chunk back to its true size and concatenate.
-        trimmed = []
-        for chunk, size in zip(chunks, sizes):
-            idx = [slice(None)] * chunk.dim()
-            idx[dim] = slice(0, size)
-            trimmed.append(chunk[tuple(idx)])
-
-        return torch.cat(trimmed, dim=dim)
-
-    def _gather_spatial(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Reconstruct the full spatial tensor by gathering across h and w."""
-        tensor = self._gather_along_dim(tensor, -1, self._w_group, self._w_size)
-        tensor = self._gather_along_dim(tensor, -2, self._h_group, self._h_size)
-        return tensor
-
     @staticmethod
     def _take(tensor: torch.Tensor, dim: int, s: slice) -> torch.Tensor:
         """Index *tensor* along *dim* with a slice."""
@@ -435,26 +390,52 @@ class ModelTorchDistributed(DistributedBackend):
         left_bdy = self._take(tensor, dim, slice(0, width)).contiguous()
         right_bdy = self._take(tensor, dim, slice(-width, None)).contiguous()
 
-        # All-gather boundaries within the group.
-        all_left = [torch.empty_like(left_bdy) for _ in range(group_size)]
-        all_right = [torch.empty_like(right_bdy) for _ in range(group_size)]
-        torch.distributed.all_gather(all_left, left_bdy, group=group)
-        torch.distributed.all_gather(all_right, right_bdy, group=group)
+        # Point-to-point exchange with immediate neighbours only.
+        # This is O(boundary) communication instead of O(group_size * boundary)
+        # with all_gather.  Uses non-blocking isend/irecv to avoid deadlocks
+        # in the periodic case.
+        has_left = periodic or my_rank > 0
+        has_right = periodic or my_rank < group_size - 1
+
+        recv_from_left = torch.empty_like(right_bdy) if has_left else None
+        recv_from_right = torch.empty_like(left_bdy) if has_right else None
+
+        group_ranks = torch.distributed.get_process_group_ranks(group)
+        reqs: list[torch.distributed.Work] = []
+
+        if has_left:
+            left_global = group_ranks[(my_rank - 1) % group_size]
+            # Send our left boundary; receive left neighbour's right boundary.
+            reqs.append(torch.distributed.isend(left_bdy, dst=left_global, group=group))
+            reqs.append(
+                torch.distributed.irecv(recv_from_left, src=left_global, group=group)
+            )
+
+        if has_right:
+            right_global = group_ranks[(my_rank + 1) % group_size]
+            # Send our right boundary; receive right neighbour's left boundary.
+            reqs.append(
+                torch.distributed.isend(right_bdy, dst=right_global, group=group)
+            )
+            reqs.append(
+                torch.distributed.irecv(recv_from_right, src=right_global, group=group)
+            )
+
+        for req in reqs:
+            req.wait()
 
         # Assemble: [left_halo | local_tensor | right_halo].
         parts: list[torch.Tensor] = []
         left_w, right_w = 0, 0
 
-        if periodic or my_rank > 0:
-            # Left halo = right boundary of the left neighbour.
-            parts.append(all_right[(my_rank - 1) % group_size])
+        if has_left:
+            parts.append(recv_from_left)
             left_w = width
 
         parts.append(tensor)
 
-        if periodic or my_rank < group_size - 1:
-            # Right halo = left boundary of the right neighbour.
-            parts.append(all_left[(my_rank + 1) % group_size])
+        if has_right:
+            parts.append(recv_from_right)
             right_w = width
 
         return torch.cat(parts, dim=dim), left_w, right_w
@@ -465,10 +446,14 @@ class ModelTorchDistributed(DistributedBackend):
 
         # Distributed nanmean over the longitude (w) dimension.
         local_sum = data.nansum(dim=-1)
-        local_count = (~torch.isnan(data)).to(data.dtype).sum(dim=-1)
+        # Use int64 for counts to avoid precision loss with float16/bfloat16.
+        local_count = (~torch.isnan(data)).to(torch.int64).sum(dim=-1)
         torch.distributed.all_reduce(local_sum, group=self._w_group)
         torch.distributed.all_reduce(local_count, group=self._w_group)
-        return local_sum / local_count
+        result = local_sum / local_count.to(local_sum.dtype)
+        # Match nanmean semantics: return NaN when all values are NaN.
+        result[local_count == 0] = float("nan")
+        return result
 
     def gradient_magnitude_percent_diff(
         self,
