@@ -150,32 +150,50 @@ def test_gather_irregular():
     )
 
 
-class TestGetLocalSpatialShapeValidation:
-    """Test that _get_local_spatial_shape raises on indivisible spatial dims."""
+class _SpatialValidationStub(ModelTorchDistributed):
+    """Minimal subclass that bypasses __init__ for divisibility testing."""
 
-    def _make_stub(self, h_size: int, w_size: int):
-        """Create a stub with the attributes needed by _get_local_spatial_shape."""
-        stub = object.__new__(ModelTorchDistributed)
-        stub._h_size = h_size
-        stub._w_size = w_size
-        stub._h_rank = 0
-        stub._w_rank = 0
-        return stub
+    def __init__(self, h_size: int, w_size: int):
+        # bypass ModelTorchDistributed.__init__ which requires a live process group
+        self._h_size = h_size
+        self._w_size = w_size
+        self._h_rank = 0
+        self._w_rank = 0
+        self._data_rank = 0
+
+    @property
+    def total_data_parallel_ranks(self) -> int:  # type: ignore[override]
+        return 1
+
+
+class TestGetLocalSpatialShapeValidation:
+    """Test that get_local_slices raises on indivisible spatial dims."""
+
+    def _make_stub(self, h_size: int, w_size: int) -> _SpatialValidationStub:
+        return _SpatialValidationStub(h_size, w_size)
 
     def test_raises_on_indivisible_height(self):
         stub = self._make_stub(h_size=3, w_size=1)
         with pytest.raises(
             ValueError, match="spatial height 10 is not evenly divisible"
         ):
-            stub._get_local_spatial_shape(10, 6)
+            stub.get_local_slices((10, 6))
 
     def test_raises_on_indivisible_width(self):
         stub = self._make_stub(h_size=1, w_size=4)
         with pytest.raises(ValueError, match="spatial width 6 is not evenly divisible"):
-            stub._get_local_spatial_shape(8, 6)
+            stub.get_local_slices((8, 6))
 
     def test_passes_on_divisible_dims(self):
         stub = self._make_stub(h_size=2, w_size=3)
-        h_slice, w_slice = stub._get_local_spatial_shape(10, 6)
+        h_slice, w_slice = stub.get_local_slices((10, 6))
         assert h_slice == slice(0, 5)
         assert w_slice == slice(0, 2)
+
+    def test_no_raise_when_validate_spatial_false(self):
+        """Spectral (lmax, mmax) arrays may have indivisible dims — must not raise."""
+        stub = self._make_stub(h_size=2, w_size=2)
+        # 21 % 2 != 0, but validate_spatial=False skips the check
+        l_slice, m_slice = stub.get_local_slices((20, 21), validate_spatial=False)
+        assert l_slice == slice(0, 10)
+        assert m_slice == slice(0, 11)

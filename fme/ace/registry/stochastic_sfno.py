@@ -41,7 +41,11 @@ def isotropic_noise(
     alm = (real + 1j * imag) * scale
 
     # --- for distributed iSHT, slice to local spectral extent --------------
-    l_slice, m_slice = Distributed.get_instance().get_local_slices((lmax, mmax))
+    # Spectral coefficient dims (lmax, mmax) need not be divisible by h/w
+    # decomposition sizes, so skip the spatial divisibility check.
+    l_slice, m_slice = Distributed.get_instance().get_local_slices(
+        (lmax, mmax), validate_spatial=False
+    )
     alm = alm[..., l_slice, m_slice]
 
     return isht(alm)

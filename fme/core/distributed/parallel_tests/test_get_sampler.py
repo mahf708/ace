@@ -42,7 +42,7 @@ def test_get_sampler_covers_all_indices():
     sampler_indices = list(sampler)
 
     all_sampler_indices = dist.gather_object(sampler_indices)
-    H, W = 9, 18
+    H, W = 8, 18
     local_slices = dist.get_local_slices([H, W])
     all_local_slices = dist.gather_object(local_slices)
     if dist.is_root():

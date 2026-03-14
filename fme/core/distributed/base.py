@@ -44,7 +44,12 @@ class DistributedBackend(ABC):
     def local_batch_size(self, batch_size: int) -> int: ...
 
     @abstractmethod
-    def get_local_slices(self, tensor_shape, data_parallel_dim: int | None = None): ...
+    def get_local_slices(
+        self,
+        tensor_shape,
+        data_parallel_dim: int | None = None,
+        validate_spatial: bool = True,
+    ): ...
 
     @abstractmethod
     def reduce_mean(self, tensor: torch.Tensor) -> torch.Tensor | None: ...

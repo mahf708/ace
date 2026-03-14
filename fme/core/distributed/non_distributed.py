@@ -48,7 +48,12 @@ class NonDistributed(DistributedBackend):
     def total_data_parallel_ranks(self) -> int:
         return self.total_ranks  # no model parallelism
 
-    def get_local_slices(self, tensor_shape, data_parallel_dim: int | None = None):
+    def get_local_slices(
+        self,
+        tensor_shape,
+        data_parallel_dim: int | None = None,
+        validate_spatial: bool = True,
+    ):
         return tuple(slice(None, None) for _ in tensor_shape)
 
     def local_batch_size(self, batch_size: int) -> int:

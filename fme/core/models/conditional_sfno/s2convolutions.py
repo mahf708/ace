@@ -162,7 +162,11 @@ class SpectralConvS2(nn.Module):
         assert self.inverse_transform.mmax == self.modes_lon
 
         dist = Distributed.get_instance()
-        l_slice, _ = dist.get_local_slices((self.modes_lat, self.modes_lon))
+        # modes_lat/modes_lon are spectral truncation modes (lmax/mmax), not
+        # spatial dims; uneven splits are valid, so skip divisibility check.
+        l_slice, _ = dist.get_local_slices(
+            (self.modes_lat, self.modes_lon), validate_spatial=False
+        )
         l_start, l_stop, _ = l_slice.indices(self.modes_lat)
         self.modes_lat_local = l_stop - l_start
         self._l_slice = l_slice

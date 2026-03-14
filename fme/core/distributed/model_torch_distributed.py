@@ -167,23 +167,7 @@ class ModelTorchDistributed(DistributedBackend):
 
         Returns:
             tuple[slice, slice]: Slices for the local height and width.
-
-        Raises:
-            ValueError: If h or w is not evenly divisible by the
-                corresponding spatial decomposition size.
         """
-        if h % self._h_size != 0:
-            raise ValueError(
-                f"spatial height {h} is not evenly divisible by "
-                f"h_size={self._h_size}; uneven spatial decomposition "
-                f"is not currently supported"
-            )
-        if w % self._w_size != 0:
-            raise ValueError(
-                f"spatial width {w} is not evenly divisible by "
-                f"w_size={self._w_size}; uneven spatial decomposition "
-                f"is not currently supported"
-            )
         from torch_harmonics.distributed import compute_split_shapes
 
         h_shapes = compute_split_shapes(h, self._h_size)
@@ -195,11 +179,25 @@ class ModelTorchDistributed(DistributedBackend):
             slice(w_start, w_start + w_shapes[self._w_rank]),
         )
 
-    def get_local_slices(self, tensor_shape, data_parallel_dim: int | None = None):
+    def get_local_slices(
+        self,
+        tensor_shape,
+        data_parallel_dim: int | None = None,
+        validate_spatial: bool = True,
+    ):
         """Return index slices for this rank's local chunk.
 
         Slices the ``data_parallel_dim`` across data-parallel ranks and
         the last two dimensions across spatial (h, w) model-parallel ranks.
+
+        Args:
+            tensor_shape: Shape of the global tensor.
+            data_parallel_dim: Index of the data-parallel (batch) dimension,
+                or None if absent.
+            validate_spatial: If True (default), raise ValueError when the
+                last two dimensions are not evenly divisible by h_size/w_size.
+                Pass False when slicing non-spatial arrays (e.g. spectral
+                coefficient arrays) where uneven splits are acceptable.
         """
         if len(tensor_shape) < 2:
             raise ValueError(
@@ -238,9 +236,21 @@ class ModelTorchDistributed(DistributedBackend):
             )
         # Spatial slicing on the last two dimensions (H, W).
         if len(tensor_shape) >= 2:
-            return_list[-2], return_list[-1] = self._get_local_spatial_shape(
-                tensor_shape[-2], tensor_shape[-1]
-            )
+            h, w = tensor_shape[-2], tensor_shape[-1]
+            if validate_spatial:
+                if h % self._h_size != 0:
+                    raise ValueError(
+                        f"spatial height {h} is not evenly divisible by "
+                        f"h_size={self._h_size}; uneven spatial decomposition "
+                        f"is not currently supported"
+                    )
+                if w % self._w_size != 0:
+                    raise ValueError(
+                        f"spatial width {w} is not evenly divisible by "
+                        f"w_size={self._w_size}; uneven spatial decomposition "
+                        f"is not currently supported"
+                    )
+            return_list[-2], return_list[-1] = self._get_local_spatial_shape(h, w)
         return tuple(return_list)
 
     def local_batch_size(self, batch_size: int) -> int:

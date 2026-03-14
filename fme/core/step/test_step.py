@@ -32,7 +32,7 @@ from fme.core.typing_ import TensorDict
 
 from .radiation import SeparateRadiationStepConfig
 
-DEFAULT_IMG_SHAPE = (45, 90)
+DEFAULT_IMG_SHAPE = (46, 90)
 
 
 def get_network_and_loss_normalization_config(

@@ -38,7 +38,7 @@ from fme.core.step.single_module import SingleModuleStepConfig
 from fme.core.step.step import StepABC, StepSelector
 from fme.core.typing_ import TensorDict
 
-DEFAULT_IMG_SHAPE = (45, 90)
+DEFAULT_IMG_SHAPE = (46, 90)
 
 DATA_DIR = pathlib.Path(__file__).parent / "testdata"
 

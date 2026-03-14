@@ -44,7 +44,12 @@ class MockDistributed:
         """
         return self.gather(tensor)  # this is single-process, can't be irregular
 
-    def get_local_slices(self, tensor_shape, data_parallel_dim=None):
+    def get_local_slices(
+        self,
+        tensor_shape,
+        data_parallel_dim=None,
+        validate_spatial: bool = True,
+    ):
         return tuple(slice(None) for _ in tensor_shape)
 
     def spatial_reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
