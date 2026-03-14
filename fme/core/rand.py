@@ -35,7 +35,8 @@ def _generate_and_slice(global_shape, local_slices, **kwargs):
     if USE_CPU_RANDN:
         device = kwargs.pop("device", None)
         full = torch.randn(global_shape, device="cpu", **kwargs)
-        return full[(..., *local_slices)].contiguous().to(device)
+        sliced = full[(..., *local_slices)].contiguous()
+        return sliced.to(device) if device is not None else sliced
     else:
         full = torch.randn(global_shape, **kwargs)
         return full[(..., *local_slices)].contiguous()
@@ -48,9 +49,9 @@ def randn_like(x: torch.Tensor, **kwargs):
         global_shape = list(x.shape)
         global_shape[-2] = _GLOBAL_IMG_SHAPE[0]
         global_shape[-1] = _GLOBAL_IMG_SHAPE[1]
-        return _generate_and_slice(
-            global_shape, local_slices, dtype=x.dtype, device=x.device, **kwargs
-        )
+        kwargs.setdefault("dtype", x.dtype)
+        kwargs.setdefault("device", x.device)
+        return _generate_and_slice(global_shape, local_slices, **kwargs)
     if USE_CPU_RANDN:
         device = kwargs.pop("device", x.device)
         return torch.randn_like(x, device="cpu", **kwargs).to(device)
@@ -61,7 +62,8 @@ def randn_like(x: torch.Tensor, **kwargs):
 def randn(shape: torch.Size, **kwargs) -> torch.Tensor:
     if USE_CPU_RANDN:
         device = kwargs.pop("device", None)
-        return torch.randn(shape, device="cpu", **kwargs).to(device)
+        result = torch.randn(shape, device="cpu", **kwargs)
+        return result.to(device) if device is not None else result
     else:
         return torch.randn(shape, **kwargs)
 
@@ -75,7 +77,14 @@ def randn_spatial(shape: list[int] | tuple[int, ...], **kwargs) -> torch.Tensor:
 
     Use this instead of ``torch.randn`` when the tensor has spatial (H, W)
     dimensions that may be decomposed across ranks.
+
+    Raises:
+        ValueError: If shape has fewer than 2 dimensions.
     """
+    if len(shape) < 2:
+        raise ValueError(
+            f"randn_spatial requires shape with at least 2 dimensions, got {shape}"
+        )
     if _GLOBAL_IMG_SHAPE is not None:
         dist = Distributed.get_instance()
         local_slices = dist.get_local_slices(_GLOBAL_IMG_SHAPE)
@@ -85,7 +94,8 @@ def randn_spatial(shape: list[int] | tuple[int, ...], **kwargs) -> torch.Tensor:
         return _generate_and_slice(global_shape, local_slices, **kwargs)
     if USE_CPU_RANDN:
         device = kwargs.pop("device", None)
-        return torch.randn(shape, device="cpu", **kwargs).to(device)
+        result = torch.randn(list(shape), device="cpu", **kwargs)
+        return result.to(device) if device is not None else result
     else:
         return torch.randn(list(shape), **kwargs)
 
