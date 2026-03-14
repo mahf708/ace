@@ -16,8 +16,13 @@ def _pad_along_dim(
     """Pad *tensor* along a single *dim* using ``F.pad``.
 
     ``F.pad`` expects pairs from the last dimension backwards, so we build
-    the pad tuple accordingly.  Supports any mode accepted by ``F.pad``
-    (``'replicate'``, ``'circular'``, ``'constant'``, …).
+    the pad tuple accordingly.
+
+    Note:
+        Non-constant modes (``'replicate'``, ``'reflect'``, ``'circular'``)
+        only support padding the last 1–3 dimensions depending on input
+        rank.  Callers must ensure *dim* is compatible; use ``'constant'``
+        mode for arbitrary dimensions.
     """
     if left == 0 and right == 0:
         return tensor
@@ -225,9 +230,14 @@ class DistributedBackend(ABC):
     ) -> torch.Tensor:
         """Distributed rolling mean along *dim*.
 
+        Under spatial parallelism, *dim* must be a spatial dimension
+        (``-1`` for w, ``-2`` for h) because ``halo_exchange`` only
+        supports those axes.
+
         Args:
             tensor: Input tensor.
-            dim: Dimension to roll along.
+            dim: Dimension to roll along (spatial dims ``-1``/``-2``
+                under spatial parallelism).
             window_size: Size of the rolling window (must be odd).
             periodic: Whether the dimension wraps around.
 

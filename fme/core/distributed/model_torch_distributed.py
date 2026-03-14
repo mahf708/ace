@@ -363,6 +363,9 @@ class ModelTorchDistributed(DistributedBackend):
         width: int,
         periodic: bool = False,
     ) -> tuple[torch.Tensor, int, int]:
+        if width == 0:
+            return tensor, 0, 0
+
         ndim = tensor.dim()
         dim_idx = dim if dim >= 0 else ndim + dim
 
@@ -393,7 +396,11 @@ class ModelTorchDistributed(DistributedBackend):
         # Point-to-point exchange with immediate neighbours only.
         # This is O(boundary) communication instead of O(group_size * boundary)
         # with all_gather.  Uses non-blocking isend/irecv to avoid deadlocks
-        # in the periodic case.
+        # in the periodic case.  Distinct tags prevent message mix-up when
+        # left_global == right_global (periodic 2-rank groups).
+        _TAG_LEFT = 0
+        _TAG_RIGHT = 1
+
         has_left = periodic or my_rank > 0
         has_right = periodic or my_rank < group_size - 1
 
@@ -406,19 +413,29 @@ class ModelTorchDistributed(DistributedBackend):
         if has_left:
             left_global = group_ranks[(my_rank - 1) % group_size]
             # Send our left boundary; receive left neighbour's right boundary.
-            reqs.append(torch.distributed.isend(left_bdy, dst=left_global, group=group))
             reqs.append(
-                torch.distributed.irecv(recv_from_left, src=left_global, group=group)
+                torch.distributed.isend(
+                    left_bdy, dst=left_global, group=group, tag=_TAG_LEFT
+                )
+            )
+            reqs.append(
+                torch.distributed.irecv(
+                    recv_from_left, src=left_global, group=group, tag=_TAG_RIGHT
+                )
             )
 
         if has_right:
             right_global = group_ranks[(my_rank + 1) % group_size]
             # Send our right boundary; receive right neighbour's left boundary.
             reqs.append(
-                torch.distributed.isend(right_bdy, dst=right_global, group=group)
+                torch.distributed.isend(
+                    right_bdy, dst=right_global, group=group, tag=_TAG_RIGHT
+                )
             )
             reqs.append(
-                torch.distributed.irecv(recv_from_right, src=right_global, group=group)
+                torch.distributed.irecv(
+                    recv_from_right, src=right_global, group=group, tag=_TAG_LEFT
+                )
             )
 
         for req in reqs:
