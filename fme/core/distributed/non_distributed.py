@@ -6,7 +6,7 @@ import torch_harmonics as th
 
 from fme.core import metrics
 
-from .base import DistributedBackend
+from .base import DistributedBackend, _pad_along_dim
 
 T = TypeVar("T")
 
@@ -116,6 +116,18 @@ class NonDistributed(DistributedBackend):
 
     def get_disco_conv_s2(self, *args, **kwargs) -> nn.Module:
         return th.DiscreteContinuousConvS2(*args, **kwargs).float()
+
+    def halo_exchange(
+        self,
+        tensor: torch.Tensor,
+        dim: int,
+        width: int,
+        periodic: bool = False,
+    ) -> tuple[torch.Tensor, int, int]:
+        if periodic:
+            padded = _pad_along_dim(tensor, dim, width, width, mode="circular")
+            return padded, width, width
+        return tensor, 0, 0
 
     def spatial_reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
         return tensor

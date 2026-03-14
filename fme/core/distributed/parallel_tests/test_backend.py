@@ -16,6 +16,13 @@ from fme.core import get_device, metrics
 from fme.core.distributed import Distributed
 
 
+def _normalize_slice(s: slice, dim_size: int) -> slice:
+    """Replace ``None`` start/stop with concrete values."""
+    start = s.start if s.start is not None else 0
+    stop = s.stop if s.stop is not None else dim_size
+    return slice(start, stop)
+
+
 @pytest.mark.parallel
 def test_reduce_mean_all_ones():
     """Reducing an all-ones tensor should return all ones."""
@@ -322,6 +329,110 @@ def test_zonal_mean_with_nans():
 
 
 @pytest.mark.parallel
+def test_halo_exchange_periodic():
+    """Periodic halo exchange recovers correct neighbour data."""
+    dist = Distributed.get_instance()
+    device = get_device()
+    global_shape = (2, 3, 8, 16)
+
+    gen = torch.Generator(device="cpu").manual_seed(77)
+    global_data = torch.randn(*global_shape, generator=gen).to(device)
+
+    slices = dist.get_local_slices(global_shape)
+    local_data = global_data[slices]
+
+    padded, left_w, right_w = dist.halo_exchange(
+        local_data, dim=-1, width=1, periodic=True
+    )
+
+    # Periodic → always 1 on each side.
+    assert left_w == 1
+    assert right_w == 1
+    assert padded.shape[-1] == local_data.shape[-1] + 2
+
+    # Left halo should equal the global column just before this rank's w-slice.
+    w_slice = _normalize_slice(slices[-1], global_shape[-1])
+    left_col_idx = (w_slice.start - 1) % global_shape[-1]
+    expected_left = global_data[slices[:-1]][..., left_col_idx : left_col_idx + 1]
+    torch.testing.assert_close(padded[..., :1], expected_left)
+
+    # Right halo should equal the global column just after this rank's w-slice.
+    right_col_idx = w_slice.stop % global_shape[-1]
+    expected_right = global_data[slices[:-1]][..., right_col_idx : right_col_idx + 1]
+    torch.testing.assert_close(padded[..., -1:], expected_right)
+
+
+@pytest.mark.parallel
+def test_halo_exchange_non_periodic():
+    """Non-periodic halo exchange gives asymmetric halos at domain boundaries."""
+    dist = Distributed.get_instance()
+    device = get_device()
+    global_shape = (2, 3, 8, 16)
+
+    gen = torch.Generator(device="cpu").manual_seed(88)
+    global_data = torch.randn(*global_shape, generator=gen).to(device)
+
+    slices = dist.get_local_slices(global_shape)
+    local_data = global_data[slices]
+
+    padded, left_w, right_w = dist.halo_exchange(
+        local_data, dim=-2, width=1, periodic=False
+    )
+
+    h_slice = _normalize_slice(slices[-2], global_shape[-2])
+    # Boundary checks: at the top of the domain, no left halo.
+    if h_slice.start == 0:
+        assert left_w == 0
+    else:
+        assert left_w == 1
+    # At the bottom of the domain, no right halo.
+    if h_slice.stop == global_shape[-2]:
+        assert right_w == 0
+    else:
+        assert right_w == 1
+
+    assert padded.shape[-2] == local_data.shape[-2] + left_w + right_w
+
+    # Verify halo values by comparing against the global tensor.
+    if left_w > 0:
+        expected_row = global_data[slices[:-2]][
+            ..., h_slice.start - 1 : h_slice.start, :
+        ]
+        # Only take the local w-slice.
+        expected_row = expected_row[..., slices[-1]]
+        torch.testing.assert_close(padded[..., :1, :], expected_row)
+    if right_w > 0:
+        expected_row = global_data[slices[:-2]][..., h_slice.stop : h_slice.stop + 1, :]
+        expected_row = expected_row[..., slices[-1]]
+        torch.testing.assert_close(padded[..., -1:, :], expected_row)
+
+
+@pytest.mark.parallel
+def test_rolling_matches_global():
+    """Distributed rolling mean matches single-rank result."""
+    dist = Distributed.get_instance()
+    device = get_device()
+    global_shape = (2, 3, 8, 16)
+
+    gen = torch.Generator(device="cpu").manual_seed(55)
+    global_data = torch.randn(*global_shape, generator=gen).to(device)
+
+    slices = dist.get_local_slices(global_shape)
+    local_data = global_data[slices]
+
+    result = dist.rolling(local_data, dim=-1, window_size=3, periodic=True)
+
+    # Reference: circular pad the full tensor, unfold, mean, then take local slice.
+    from fme.core.distributed.base import _pad_along_dim
+
+    padded_global = _pad_along_dim(global_data, -1, 1, 1, mode="circular")
+    expected_full = padded_global.unfold(-1, 3, 1).mean(dim=-1)
+    expected = expected_full[slices]
+
+    torch.testing.assert_close(result, expected)
+
+
+@pytest.mark.parallel
 def test_gradient_magnitude_percent_diff():
     """Distributed gradient_magnitude_percent_diff matches single-rank result."""
     dist = Distributed.get_instance()
@@ -350,4 +461,7 @@ def test_gradient_magnitude_percent_diff():
         truth, predicted, weights=weights, dim=(-2, -1)
     )
 
-    torch.testing.assert_close(result, expected)
+    # Relax tolerance slightly: the distributed path sums local weighted
+    # values then reduces, while the reference sums globally in one shot,
+    # so floating-point ordering can differ by ~1e-5.
+    torch.testing.assert_close(result, expected, atol=5e-5, rtol=5e-5)
