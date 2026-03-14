@@ -171,10 +171,12 @@ class SpectralConvS2(nn.Module):
             scale = math.sqrt(1 / (in_channels)) * torch.ones(self.modes_lat, 1, 1, 2)
             # seemingly the first weight is not really complex, so we need to account for that
             scale[0, :] *= math.sqrt(2.0)
+            # Only keep the local slice of the scale for this rank's modes.
+            scale = scale[self._l_slice]
 
         weight_shape = [
             num_groups,
-            self.modes_lat,
+            self.modes_lat_local,
             out_channels // num_groups,
             in_channels // num_groups,
         ]
@@ -188,7 +190,7 @@ class SpectralConvS2(nn.Module):
                 scale
                 * torch.randn(
                     num_groups,
-                    self.modes_lat,
+                    self.modes_lat_local,
                     lora_rank,
                     in_channels // num_groups,
                     2,
@@ -197,7 +199,7 @@ class SpectralConvS2(nn.Module):
             self.lora_B = nn.Parameter(
                 torch.zeros(
                     num_groups,
-                    self.modes_lat,
+                    self.modes_lat_local,
                     out_channels // num_groups,
                     lora_rank,
                     2,
@@ -218,6 +220,7 @@ class SpectralConvS2(nn.Module):
         # rewrite old checkpoints on load
         self.register_load_state_dict_pre_hook(self._add_singleton_group_dim)
         self.register_load_state_dict_pre_hook(self._reorder_weight_dims)
+        self.register_load_state_dict_pre_hook(self._slice_global_weights)
 
     @staticmethod
     def _reorder_weight_dims(
@@ -307,6 +310,34 @@ class SpectralConvS2(nn.Module):
         if weight.shape == ungrouped_shape:
             state_dict[key] = weight.view(1, *ungrouped_shape)
 
+    @staticmethod
+    def _slice_global_weights(
+        module: "SpectralConvS2",
+        state_dict: dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: dict,
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        """Slice global (full modes_lat) weights to the local spectral partition.
+
+        When loading a checkpoint saved without spatial parallelism (or from a
+        different partition), the weight tensors will have the full ``modes_lat``
+        dimension.  This hook slices them down to ``modes_lat_local`` so they
+        match the module's parameter shapes.
+        """
+        l_slice = module._l_slice
+        for suffix in ("weight", "lora_A", "lora_B"):
+            key = prefix + suffix
+            if key not in state_dict:
+                continue
+            tensor = state_dict[key]
+            # The modes_lat dimension is always axis 1 (after group dim).
+            if tensor.shape[1] == module.modes_lat:
+                state_dict[key] = tensor[:, l_slice]
+
     def forward(self, x, timer: Timer = NullTimer()):  # pragma: no cover
         dtype = x.dtype
         residual = x
@@ -325,14 +356,12 @@ class SpectralConvS2(nn.Module):
         assert C % self.num_groups == 0
         x = x.reshape(B, self.num_groups, C // self.num_groups, H, W)
 
-        # Slice global weights to the local spectral partition (lat only).
-        weight_local = self.weight[:, self._l_slice]
         if self.lora_A is not None and self.lora_B is not None:
             with timer.child("lora_update"):
                 lora_update = _contract_lora(
                     self.lora_A,
                     self.lora_B,
-                    x[..., : self.modes_lat, : self.modes_lon],
+                    x[..., : self.modes_lat_local, : self.modes_lon],
                 )
         else:
             lora_update = 0.0
@@ -341,7 +370,7 @@ class SpectralConvS2(nn.Module):
             xp = torch.zeros_like(x)
             xp[..., : self.modes_lat_local, : self.modes_lon] = _contract_dhconv(
                 x[..., : self.modes_lat_local, : self.modes_lon],
-                weight_local,
+                self.weight,
             )
             xp = xp + self.lora_scaling * lora_update
             xp = xp.reshape(B, self.out_channels, H, W)

@@ -4,6 +4,8 @@ import pytest
 import torch
 
 from fme.core.device import get_device
+from fme.core.distributed import Distributed
+from fme.core.distributed.non_distributed import NonDistributed
 from fme.core.gridded_ops import LatLonOperations
 from fme.core.models.conditional_sfno.s2convolutions import SpectralConvS2
 
@@ -85,8 +87,8 @@ def test_contract_dhconv_groups_are_faster():
     assert grouped_result.max_alloc < 1.05 * ungrouped_result.max_alloc, (
         "Did not expect grouped DHConv to use significantly more memory "
         "than ungrouped, but got "
-        f"{grouped_result.max_alloc/1024/1024:.2f} MB for grouped and "
-        f"{ungrouped_result.max_alloc/1024/1024:.2f} MB for ungrouped."
+        f"{grouped_result.max_alloc / 1024 / 1024:.2f} MB for grouped and "
+        f"{ungrouped_result.max_alloc / 1024 / 1024:.2f} MB for ungrouped."
     )
 
 
@@ -133,3 +135,91 @@ def test_spectral_conv_s2_lora():
     # initial outputs should be identical since LoRA starts at 0
     assert torch.allclose(y1, y2, atol=1e-6)
     assert torch.allclose(residual1, residual2, atol=1e-6)
+
+
+class _SpatialSliceBackend(NonDistributed):
+    """Fake backend that simulates spatial parallelism by slicing the h dim."""
+
+    def __init__(self, h_rank: int, h_size: int):
+        self._h_rank = h_rank
+        self._h_size = h_size
+
+    def get_local_slices(self, tensor_shape, data_parallel_dim=None):
+        slices = list(super().get_local_slices(tensor_shape, data_parallel_dim))
+        h = tensor_shape[-2]
+        chunk = h // self._h_size
+        start = self._h_rank * chunk
+        stop = start + chunk if self._h_rank < self._h_size - 1 else h
+        slices[-2] = slice(start, stop)
+        return tuple(slices)
+
+
+def _make_conv(sht, isht, lora_rank=0):
+    return SpectralConvS2(
+        forward_transform=sht,
+        inverse_transform=isht,
+        in_channels=8,
+        out_channels=8,
+        operator_type="dhconv",
+        use_tensorly=False,
+        lora_rank=lora_rank,
+    )
+
+
+def test_spectral_conv_s2_stores_only_local_weights():
+    """Under simulated spatial parallelism, weight should be local-sized."""
+    n_lat, n_lon = 12, 24
+    ops = LatLonOperations(area_weights=torch.ones(n_lat, n_lon), grid="legendre-gauss")
+    sht = ops.get_real_sht()
+    isht = ops.get_real_isht()
+
+    # Build a conv under the default (non-distributed) backend.
+    conv_full = _make_conv(sht, isht, lora_rank=4)
+    full_modes_lat = conv_full.modes_lat
+    assert conv_full.weight.shape[1] == full_modes_lat
+
+    # Now simulate rank 0 of 2-way h-parallelism.
+    backend = _SpatialSliceBackend(h_rank=0, h_size=2)
+    with Distributed.replace_backend(backend):
+        conv_local = _make_conv(sht, isht, lora_rank=4)
+
+    expected_local = full_modes_lat // 2
+    assert conv_local.modes_lat_local == expected_local
+    assert conv_local.weight.shape[1] == expected_local
+    assert conv_local.lora_A.shape[1] == expected_local
+    assert conv_local.lora_B.shape[1] == expected_local
+
+
+def test_spectral_conv_s2_load_global_weights_into_local():
+    """Loading a full (global) checkpoint into a locally-partitioned conv
+    should slice the spectral weights automatically."""
+    n_lat, n_lon = 12, 24
+    ops = LatLonOperations(area_weights=torch.ones(n_lat, n_lon), grid="legendre-gauss")
+    sht = ops.get_real_sht()
+    isht = ops.get_real_isht()
+
+    torch.manual_seed(42)
+    conv_full = _make_conv(sht, isht, lora_rank=4)
+    global_state = conv_full.state_dict()
+
+    h_size = 2
+    for h_rank in range(h_size):
+        backend = _SpatialSliceBackend(h_rank=h_rank, h_size=h_size)
+        with Distributed.replace_backend(backend):
+            conv_local = _make_conv(sht, isht, lora_rank=4)
+            conv_local.load_state_dict(global_state)
+
+        l_slice = conv_local._l_slice
+        # Verify the loaded local weights match the expected slice of globals.
+        torch.testing.assert_close(
+            conv_local.weight.data,
+            global_state["weight"][:, l_slice],
+        )
+        torch.testing.assert_close(
+            conv_local.lora_A.data,
+            global_state["lora_A"][:, l_slice],
+        )
+        torch.testing.assert_close(
+            conv_local.lora_B.data,
+            global_state["lora_B"][:, l_slice],
+        )
