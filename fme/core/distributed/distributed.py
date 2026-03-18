@@ -447,6 +447,24 @@ class Distributed:
     def zonal_mean(self, data: torch.Tensor) -> torch.Tensor:
         return self._distributed.zonal_mean(data)
 
+    def halo_exchange(
+        self,
+        tensor: torch.Tensor,
+        dim: int,
+        width: int,
+        periodic: bool = False,
+    ) -> tuple[torch.Tensor, int, int]:
+        return self._distributed.halo_exchange(tensor, dim, width, periodic=periodic)
+
+    def rolling(
+        self,
+        tensor: torch.Tensor,
+        dim: int,
+        window_size: int,
+        periodic: bool = False,
+    ) -> torch.Tensor:
+        return self._distributed.rolling(tensor, dim, window_size, periodic=periodic)
+
     def gradient_magnitude_percent_diff(
         self,
         truth: torch.Tensor,

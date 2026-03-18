@@ -31,7 +31,7 @@ from torch.nn.parallel import DistributedDataParallel
 from fme.core.device import using_gpu, using_srun
 
 from ._gloo_patch import patch_gloo_alltoall
-from .base import DistributedBackend
+from .base import DistributedBackend, _pad_along_dim
 from .external.pnd_manager import DistributedManager
 from .non_distributed import DummyWrapper
 from .torch_distributed import _gather_irregular
@@ -349,10 +349,128 @@ class ModelTorchDistributed(DistributedBackend):
             local_weight_sum
         )
 
+    @staticmethod
+    def _take(tensor: torch.Tensor, dim: int, s: slice) -> torch.Tensor:
+        """Index *tensor* along *dim* with a slice."""
+        idx = [slice(None)] * tensor.dim()
+        idx[dim] = s
+        return tensor[tuple(idx)]
+
+    def halo_exchange(
+        self,
+        tensor: torch.Tensor,
+        dim: int,
+        width: int,
+        periodic: bool = False,
+    ) -> tuple[torch.Tensor, int, int]:
+        if width == 0:
+            return tensor, 0, 0
+
+        ndim = tensor.dim()
+        dim_idx = dim if dim >= 0 else ndim + dim
+
+        # Map dimension to the corresponding process group.
+        if dim_idx == ndim - 1:
+            group, group_size, my_rank = self._w_group, self._w_size, self._w_rank
+        elif dim_idx == ndim - 2:
+            group, group_size, my_rank = self._h_group, self._h_size, self._h_rank
+        else:
+            raise ValueError(
+                f"halo_exchange only supports spatial dims (-1, -2), got {dim}"
+            )
+
+        # Single-rank group: no peers to exchange with.
+        if group_size == 1:
+            if periodic:
+                return (
+                    _pad_along_dim(tensor, dim, width, width, mode="circular"),
+                    width,
+                    width,
+                )
+            return tensor, 0, 0
+
+        # Extract boundary slices to share with neighbours.
+        left_bdy = self._take(tensor, dim, slice(0, width)).contiguous()
+        right_bdy = self._take(tensor, dim, slice(-width, None)).contiguous()
+
+        # Point-to-point exchange with immediate neighbours only.
+        # This is O(boundary) communication instead of O(group_size * boundary)
+        # with all_gather.  Uses non-blocking isend/irecv to avoid deadlocks
+        # in the periodic case.  Distinct tags prevent message mix-up when
+        # left_global == right_global (periodic 2-rank groups).
+        _TAG_LEFT = 0
+        _TAG_RIGHT = 1
+
+        has_left = periodic or my_rank > 0
+        has_right = periodic or my_rank < group_size - 1
+
+        recv_from_left = torch.empty_like(right_bdy) if has_left else None
+        recv_from_right = torch.empty_like(left_bdy) if has_right else None
+
+        group_ranks = torch.distributed.get_process_group_ranks(group)
+        reqs: list[torch.distributed.Work] = []
+
+        if has_left:
+            left_global = group_ranks[(my_rank - 1) % group_size]
+            # Send our left boundary; receive left neighbour's right boundary.
+            reqs.append(
+                torch.distributed.isend(
+                    left_bdy, dst=left_global, group=group, tag=_TAG_LEFT
+                )
+            )
+            reqs.append(
+                torch.distributed.irecv(
+                    recv_from_left, src=left_global, group=group, tag=_TAG_RIGHT
+                )
+            )
+
+        if has_right:
+            right_global = group_ranks[(my_rank + 1) % group_size]
+            # Send our right boundary; receive right neighbour's left boundary.
+            reqs.append(
+                torch.distributed.isend(
+                    right_bdy, dst=right_global, group=group, tag=_TAG_RIGHT
+                )
+            )
+            reqs.append(
+                torch.distributed.irecv(
+                    recv_from_right, src=right_global, group=group, tag=_TAG_LEFT
+                )
+            )
+
+        for req in reqs:
+            req.wait()
+
+        # Assemble: [left_halo | local_tensor | right_halo].
+        parts: list[torch.Tensor] = []
+        left_w, right_w = 0, 0
+
+        if has_left:
+            parts.append(recv_from_left)
+            left_w = width
+
+        parts.append(tensor)
+
+        if has_right:
+            parts.append(recv_from_right)
+            right_w = width
+
+        return torch.cat(parts, dim=dim), left_w, right_w
+
     def zonal_mean(self, data: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError(
-            "zonal_mean is not yet supported under spatial parallelism."
-        )
+        if self._w_size == 1:
+            return data.nanmean(dim=-1)
+
+        # Distributed nanmean over the longitude (w) dimension.
+        local_sum = data.nansum(dim=-1)
+        # Use int64 for counts to avoid precision loss with float16/bfloat16.
+        local_count = (~torch.isnan(data)).to(torch.int64).sum(dim=-1)
+        torch.distributed.all_reduce(local_sum, group=self._w_group)
+        torch.distributed.all_reduce(local_count, group=self._w_group)
+        result = local_sum / local_count.to(local_sum.dtype)
+        # Match nanmean semantics: return NaN when all values are NaN.
+        result[local_count == 0] = float("nan")
+        return result
 
     def gradient_magnitude_percent_diff(
         self,
@@ -361,10 +479,38 @@ class ModelTorchDistributed(DistributedBackend):
         weights: torch.Tensor,
         dim: tuple[int, ...],
     ) -> torch.Tensor:
-        raise NotImplementedError(
-            "gradient_magnitude_percent_diff is not yet supported "
-            "under spatial parallelism."
-        )
+        from fme.core.metrics import gradient_magnitude
+
+        # Halo exchange (width=1) gives each rank the one neighbour cell
+        # needed by torch.gradient's central differences — O(H + W)
+        # communication instead of the previous O(H * W) full gather.
+        # We use periodic=False to match the boundary behaviour of
+        # torch.gradient on the gathered full domain (one-sided at edges).
+        halos: dict[int, tuple[int, int]] = {}
+        for d in dim:
+            truth, tl, tr = self.halo_exchange(truth, d, width=1, periodic=False)
+            predicted, pl, pr = self.halo_exchange(
+                predicted, d, width=1, periodic=False
+            )
+            halos[d] = (tl, tr)
+
+        # Compute gradient magnitude on the padded tensors.
+        truth_gm = gradient_magnitude(truth, dim=dim)
+        pred_gm = gradient_magnitude(predicted, dim=dim)
+
+        # Strip the halo cells so the result matches the local spatial shape.
+        idx = [slice(None)] * truth_gm.dim()
+        for d, (left, right) in halos.items():
+            di = d if d >= 0 else truth_gm.dim() + d
+            end = truth_gm.shape[di] - right if right > 0 else None
+            idx[di] = slice(left, end)
+        truth_gm = truth_gm[tuple(idx)]
+        pred_gm = pred_gm[tuple(idx)]
+
+        # Distributed weighted mean + percent difference.
+        truth_wmgm = self.weighted_mean(truth_gm, weights, dim=dim)
+        pred_wmgm = self.weighted_mean(pred_gm, weights, dim=dim)
+        return 100 * (pred_wmgm - truth_wmgm) / truth_wmgm
 
     def get_sht(self, nlat, nlon, lmax=None, mmax=None, grid="legendre-gauss"):
         return thd.DistributedRealSHT(

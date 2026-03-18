@@ -5,8 +5,37 @@ from typing import TypeVar
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 T = TypeVar("T")
+
+
+def _pad_along_dim(
+    tensor: torch.Tensor, dim: int, left: int, right: int, mode: str = "replicate"
+) -> torch.Tensor:
+    """Pad *tensor* along a single *dim* using ``F.pad``.
+
+    ``F.pad`` expects pairs from the last dimension backwards, so we build
+    the pad tuple accordingly.
+
+    Note:
+        Non-constant modes (``'replicate'``, ``'reflect'``, ``'circular'``)
+        only support padding the last 1–3 dimensions depending on input
+        rank.  Callers must ensure *dim* is compatible; use ``'constant'``
+        mode for arbitrary dimensions.
+    """
+    if left == 0 and right == 0:
+        return tensor
+    ndim = tensor.dim()
+    dim_idx = dim if dim >= 0 else ndim + dim
+    # F.pad pairs: (last_left, last_right, …, dim_left, dim_right)
+    rev_idx = ndim - 1 - dim_idx
+    # For non-constant modes, F.pad requires at least 2*(ndim-2) pad entries.
+    min_pairs = max(rev_idx + 1, ndim - 2) if mode != "constant" else rev_idx + 1
+    pad_sizes = [0] * (2 * min_pairs)
+    pad_sizes[2 * rev_idx] = left
+    pad_sizes[2 * rev_idx + 1] = right
+    return F.pad(tensor, pad_sizes, mode=mode)
 
 
 class DistributedBackend(ABC):
@@ -168,6 +197,64 @@ class DistributedBackend(ABC):
     def zonal_mean(self, data: torch.Tensor) -> torch.Tensor:
         """Compute the zonal mean (mean over longitude dimension)."""
         ...
+
+    @abstractmethod
+    def halo_exchange(
+        self,
+        tensor: torch.Tensor,
+        dim: int,
+        width: int,
+        periodic: bool = False,
+    ) -> tuple[torch.Tensor, int, int]:
+        """Pad *tensor* with ghost cells from neighboring spatial ranks.
+
+        Args:
+            tensor: Input tensor.
+            dim: Dimension to exchange along (``-1`` for w, ``-2`` for h).
+            width: Number of ghost cells requested on each side.
+            periodic: Whether the dimension wraps around (e.g. longitude).
+
+        Returns:
+            ``(padded_tensor, left_width, right_width)`` — *left_width* /
+            *right_width* may be less than *width* at non-periodic domain
+            boundaries.
+        """
+        ...
+
+    def rolling(
+        self,
+        tensor: torch.Tensor,
+        dim: int,
+        window_size: int,
+        periodic: bool = False,
+    ) -> torch.Tensor:
+        """Distributed rolling mean along *dim*.
+
+        Under spatial parallelism, *dim* must be a spatial dimension
+        (``-1`` for w, ``-2`` for h) because ``halo_exchange`` only
+        supports those axes.
+
+        Args:
+            tensor: Input tensor.
+            dim: Dimension to roll along (spatial dims ``-1``/``-2``
+                under spatial parallelism).
+            window_size: Size of the rolling window (must be odd).
+            periodic: Whether the dimension wraps around.
+
+        Returns:
+            Tensor of the same shape as *tensor* with the rolling mean applied.
+        """
+        if window_size % 2 == 0:
+            raise ValueError("window_size must be odd")
+        half = window_size // 2
+        if half == 0:
+            return tensor
+        padded, left, right = self.halo_exchange(tensor, dim, half, periodic)
+        missing_left = half - left
+        missing_right = half - right
+        if missing_left > 0 or missing_right > 0:
+            padded = _pad_along_dim(padded, dim, missing_left, missing_right)
+        return padded.unfold(dim, window_size, 1).mean(dim=-1)
 
     @abstractmethod
     def gradient_magnitude_percent_diff(
