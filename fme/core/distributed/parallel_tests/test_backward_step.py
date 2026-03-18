@@ -106,7 +106,15 @@ def _run_forward_backward(step, dist):
         wrapper=lambda x: x,
     )
 
-    loss = sum(v.pow(2).mean() for v in output.values())
+    # Use spatial_reduce_sum so the loss is globally consistent across ranks.
+    # Plain .mean() would only average over the local spatial slice.
+    sp = dist.world_size // dist.total_data_parallel_ranks
+    terms = []
+    for v in output.values():
+        local_sum = v.pow(2).sum()
+        terms.append(dist.spatial_reduce_sum(local_sum))
+    global_numel = sum(v.numel() * sp for v in output.values())
+    loss = sum(terms) / global_numel
     loss.backward()
     return output, loss
 
@@ -123,12 +131,12 @@ def test_forward_backward_all_params_have_grad():
     for module in step.modules:
         for name, param in module.named_parameters():
             if param.requires_grad:
-                assert param.grad is not None, (
-                    f"Parameter {name} has requires_grad=True but grad is None"
-                )
-                assert not torch.all(param.grad == 0), (
-                    f"Parameter {name} has all-zero gradient"
-                )
+                assert (
+                    param.grad is not None
+                ), f"Parameter {name} has requires_grad=True but grad is None"
+                assert not torch.all(
+                    param.grad == 0
+                ), f"Parameter {name} has all-zero gradient"
 
 
 @pytest.mark.parallel
@@ -243,7 +251,7 @@ def test_gradients_match_non_distributed_reference():
             if param.requires_grad and param.grad is not None:
                 dist_grads[name] = param.grad.clone()
 
-    # --- Non-distributed reference ---
+    # --- Reference with same weights but fresh forward+backward ---
     step_ref = _build_step()
     step_ref.load_state(state)
 
@@ -251,11 +259,19 @@ def test_gradients_match_non_distributed_reference():
     input_data = _get_tensor_dict(step_ref.input_names, IMG_SHAPE, N_SAMPLES)
     next_input = _get_tensor_dict(step_ref.next_step_input_names, IMG_SHAPE, N_SAMPLES)
 
+    input_data = dist.scatter_spatial(input_data, IMG_SHAPE)
+    next_input = dist.scatter_spatial(next_input, IMG_SHAPE)
+
     output_ref = step_ref.step(
         args=StepArgs(input=input_data, next_step_input_data=next_input, labels=None),
         wrapper=lambda x: x,
     )
-    loss_ref = sum(v.pow(2).mean() for v in output_ref.values())
+    ref_terms = []
+    for v in output_ref.values():
+        local_sum = v.pow(2).sum()
+        ref_terms.append(dist.spatial_reduce_sum(local_sum))
+    global_numel = sum(v.numel() * sp for v in output_ref.values())
+    loss_ref = sum(ref_terms) / global_numel
     loss_ref.backward()
 
     ref_grads = {}

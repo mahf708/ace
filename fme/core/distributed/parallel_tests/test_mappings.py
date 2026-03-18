@@ -192,8 +192,18 @@ def test_gradcheck_spatial_reduce_sum():
 
     Uses torch.autograd.gradcheck to verify the backward implementation
     matches numerical finite-difference gradients.
+
+    Note: gradcheck is only valid in single-rank mode.  With multiple
+    spatial ranks, gradcheck perturbs the same element on every rank
+    simultaneously, so the numerical gradient is N * analytical_gradient
+    — a fundamental mismatch with the distributed semantics (each rank
+    owns independent data).  The analytical backward tests above cover
+    multi-rank correctness.
     """
     dist = Distributed.get_instance()
+    sp = dist.world_size // dist.total_data_parallel_ranks
+    if sp > 1:
+        pytest.skip("gradcheck is incompatible with multi-rank all_reduce")
     x = torch.randn(3, 4, device=get_device(), dtype=torch.float64, requires_grad=True)
 
     def fn(inp):
