@@ -25,6 +25,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 import torch_harmonics.distributed as thd
+from torch.amp import custom_bwd, custom_fwd
 from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel
 
@@ -40,6 +41,39 @@ logger = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+class _AutogradAllReduce(torch.autograd.Function):
+    """Autograd-aware all-reduce (sum) for spatial parallelism.
+
+    Forward: all-reduce (sum) the input across the given process group.
+    Backward: identity — gradients pass through without communication.
+
+    This makes ``spatial_reduce_sum`` differentiable so that gradients
+    flow correctly through the loss computation path::
+
+        AreaWeightedMSELoss → area_weighted_mean → weighted_mean
+            → spatial_reduce_sum (uses this function)
+
+    Without this, the raw ``torch.distributed.all_reduce`` would break
+    the autograd graph because it is an in-place, non-differentiable op.
+    """
+
+    @staticmethod
+    @custom_fwd(device_type="cuda")
+    def forward(
+        ctx,
+        input: torch.Tensor,
+        group: torch.distributed.ProcessGroup,
+    ) -> torch.Tensor:
+        output = input.clone()
+        torch.distributed.all_reduce(output, group=group)
+        return output
+
+    @staticmethod
+    @custom_bwd(device_type="cuda")
+    def backward(ctx, grad_output: torch.Tensor):
+        return grad_output, None
 
 
 class ModelTorchDistributed(DistributedBackend):
@@ -331,7 +365,7 @@ class ModelTorchDistributed(DistributedBackend):
 
     def spatial_reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
         if self._h_size > 1 or self._w_size > 1:
-            torch.distributed.all_reduce(tensor, group=self._spatial_group)
+            return _AutogradAllReduce.apply(tensor, self._spatial_group)
         return tensor
 
     def weighted_mean(
