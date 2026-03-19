@@ -468,14 +468,19 @@ class Distributed:
     def gather_spatial(
         self, data: dict[str, torch.Tensor], img_shape: tuple[int, int]
     ) -> dict[str, torch.Tensor]:
-        """Gather local spatial chunks back to global tensors via all-reduce."""
+        """Gather local spatial chunks back to global tensors via all-reduce.
+
+        Uses a plain (non-autograd) all-reduce because this method is only
+        used for test / inference gathering, never in the training graph.
+        """
         slices = self.get_local_slices(img_shape)
         result = {}
         for k, v in data.items():
             global_shape = (*v.shape[:-2], *img_shape)
             global_tensor = torch.zeros(global_shape, dtype=v.dtype, device=v.device)
             global_tensor[(..., *slices)] = v
-            result[k] = self.spatial_reduce_sum(global_tensor)
+            self._distributed.plain_all_reduce_spatial(global_tensor)
+            result[k] = global_tensor
         return result
 
     def shutdown(self):

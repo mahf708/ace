@@ -153,6 +153,14 @@ class DistributedBackend(ABC):
         """All-reduce sum across spatial (h, w) ranks. Identity for non-spatial."""
         ...
 
+    def plain_all_reduce_spatial(self, tensor: torch.Tensor) -> None:
+        """In-place all-reduce sum across spatial ranks (no autograd).
+
+        Use this only for non-training paths (e.g. test gathering) where
+        you don't need gradients.  The default is a no-op (non-spatial).
+        """
+        pass
+
     @abstractmethod
     def weighted_mean(
         self,

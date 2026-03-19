@@ -66,9 +66,13 @@ class _AutogradAllReduce(torch.autograd.Function):
         input: torch.Tensor,
         group: torch.distributed.ProcessGroup,
     ) -> torch.Tensor:
-        output = input.clone()
-        torch.distributed.all_reduce(output, group=group)
-        return output
+        buf = input.clone()
+        torch.distributed.all_reduce(buf, group=group)
+        # Return a fresh clone so the tensor the autograd engine tracks
+        # has never been modified in-place (version 0).  The in-place
+        # all_reduce bumps *buf*'s version counter, which can trigger
+        # "modified by inplace operation" errors during backward.
+        return buf.clone()
 
     @staticmethod
     @custom_bwd(device_type="cuda")
@@ -367,6 +371,11 @@ class ModelTorchDistributed(DistributedBackend):
         if self._h_size > 1 or self._w_size > 1:
             return _AutogradAllReduce.apply(tensor, self._spatial_group)
         return tensor
+
+    def plain_all_reduce_spatial(self, tensor: torch.Tensor) -> None:
+        """In-place all-reduce across spatial ranks (no autograd)."""
+        if self._h_size > 1 or self._w_size > 1:
+            torch.distributed.all_reduce(tensor, group=self._spatial_group)
 
     def weighted_mean(
         self,
