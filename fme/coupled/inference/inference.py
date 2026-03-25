@@ -140,6 +140,15 @@ class InferenceConfig:
     )
     n_ensemble_per_ic: int = 1
 
+    def __post_init__(self):
+        if self.n_coupled_steps % self.coupled_steps_in_memory != 0:
+            raise ValueError(
+                f"n_coupled_steps ({self.n_coupled_steps}) must be divisible by "
+                f"coupled_steps_in_memory ({self.coupled_steps_in_memory}). "
+                f"Otherwise the last inference window would process extra steps, "
+                f"causing the restart time to drift."
+            )
+
     def configure_logging(self, log_filename: str):
         config = dataclasses.asdict(self)
         self.logging.configure_logging(

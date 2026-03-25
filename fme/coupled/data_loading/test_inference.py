@@ -1,17 +1,22 @@
+import copy
 from typing import Any, cast
 
+import cftime
 import numpy as np
 import pytest
 
 from fme.ace.data_loading.inference import (
     ExplicitIndices,
+    ForcingDataLoaderConfig,
     InferenceInitialConditionIndices,
     TimestampList,
 )
 from fme.ace.requirements import DataRequirements
-from fme.coupled.data_loading.batch_data import CoupledBatchData
+from fme.coupled.data_loading.batch_data import CoupledBatchData, CoupledPrognosticState
 from fme.coupled.data_loading.config import CoupledDatasetWithOptionalOceanConfig
+from fme.coupled.data_loading.getters import get_forcing_data
 from fme.coupled.data_loading.inference import (
+    CoupledForcingDataLoaderConfig,
     InferenceDataLoaderConfig,
     InferenceDataset,
 )
@@ -218,3 +223,106 @@ def test_validate_inference_length_atmos(
             total_coupled_steps=_N_STEPS,
             start_indices=start_indices,
         )
+
+
+def test_restart_alignment_with_different_n_coupled_steps(tmp_path):
+    """Test that forcing data aligns correctly across restart segments
+    when n_coupled_steps changes between segments.
+
+    Simulates:
+      Segment 1: 3 coupled steps (start at index 0)
+      Segment 2: 2 coupled steps (start at restart time = index 3)
+    Verifies the second segment reads forcing data from the correct position.
+    """
+    _OCEAN_NAME = "bar"
+    _ATMOS_NAME = "foo"
+    _N_ATMOS_PER_OCEAN = 2
+    _TOTAL_OCEAN_STEPS = 6  # enough for segment 1 (3) + segment 2 (2) + margin
+
+    mock_data = create_coupled_data_on_disk(
+        tmp_path,
+        n_forward_times_ocean=_TOTAL_OCEAN_STEPS,
+        n_forward_times_atmosphere=_TOTAL_OCEAN_STEPS * _N_ATMOS_PER_OCEAN,
+        ocean_names=[_OCEAN_NAME],
+        atmosphere_names=[_ATMOS_NAME],
+    )
+
+    # --- Segment 1: 3 coupled steps starting at index 0 ---
+    segment1_steps = 3
+    dataset1 = _setup(
+        mock_data,
+        total_coupled_steps=segment1_steps,
+        start_indices=ExplicitIndices(list=[0]),
+    )
+    batch1 = dataset1[0]
+    # Verify segment 1 starts at the first ocean time
+    ocean_start_time_seg1 = batch1.ocean_data.time[0, 0].item()
+    expected_start = mock_data.ocean.ds.time.values[0]
+    assert ocean_start_time_seg1 == expected_start
+
+    # The restart time is the ocean time after 3 steps (index 3)
+    restart_time = mock_data.ocean.ds.time.values[segment1_steps]
+
+    # --- Segment 2: 2 coupled steps starting at restart index ---
+    segment2_steps = 2
+    dataset2 = _setup(
+        mock_data,
+        total_coupled_steps=segment2_steps,
+        start_indices=ExplicitIndices(list=[segment1_steps]),
+    )
+    batch2 = dataset2[0]
+
+    # Verify segment 2's forcing starts at the restart time
+    ocean_start_time_seg2 = batch2.ocean_data.time[0, 0].item()
+    assert ocean_start_time_seg2 == restart_time, (
+        f"Segment 2 ocean forcing should start at restart time {restart_time}, "
+        f"but got {ocean_start_time_seg2}"
+    )
+
+    atmos_start_time_seg2 = batch2.atmosphere_data.time[0, 0].item()
+    assert atmos_start_time_seg2 == restart_time, (
+        f"Segment 2 atmosphere forcing should start at restart time {restart_time}, "
+        f"but got {atmos_start_time_seg2}"
+    )
+
+
+def test_config_not_mutated_by_build_inference_config(tmp_path):
+    """Test that build_inference_config does not mutate the original config.
+
+    When running segmented inference, the config object may be reused across
+    segments. update_subset in InferenceDataset.__init__ must not modify the
+    original forcing_loader config.
+    """
+    _OCEAN_NAME = "bar"
+    _ATMOS_NAME = "foo"
+    _N_ATMOS_PER_OCEAN = 2
+    _N_OCEAN_STEPS = 6
+
+    mock_data = create_coupled_data_on_disk(
+        tmp_path,
+        n_forward_times_ocean=_N_OCEAN_STEPS,
+        n_forward_times_atmosphere=_N_OCEAN_STEPS * _N_ATMOS_PER_OCEAN,
+        ocean_names=[_OCEAN_NAME],
+        atmosphere_names=[_ATMOS_NAME],
+    )
+
+    forcing_config = CoupledForcingDataLoaderConfig(
+        atmosphere=ForcingDataLoaderConfig(
+            dataset=mock_data.get_dataset_config_with_kwargs().atmosphere,
+        ),
+        ocean=ForcingDataLoaderConfig(
+            dataset=mock_data.get_dataset_config_with_kwargs().ocean,
+        ),
+    )
+    original_atmos_subset = copy.deepcopy(forcing_config.atmosphere.dataset.subset)
+
+    # Build inference config (this previously mutated the original)
+    forcing_config.build_inference_config(
+        start_indices=ExplicitIndices(list=[0]),
+    )
+
+    # The original config's atmosphere subset should be unchanged
+    assert forcing_config.atmosphere.dataset.subset == original_atmos_subset, (
+        "build_inference_config should not mutate the original atmosphere "
+        "dataset config's subset"
+    )
