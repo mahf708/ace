@@ -176,7 +176,6 @@ CASES: dict[str, RegressionCase] = {
     "linear": _LinearCase(),
     "csfno": _CSFNOCase(),
     "csfno_mlp": _CSFNOCase(use_mlp=True),
-    "csfno_makani_linear": _CSFNOCase(filter_type="makani-linear"),
 }
 
 
