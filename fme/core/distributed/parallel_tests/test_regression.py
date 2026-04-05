@@ -68,6 +68,73 @@ class RegressionCase(ABC):
 # ---------------------------------------------------------------------------
 
 
+
+import datetime
+from fme.core.registry.module import ModuleSelector
+from fme.core.coordinates import LatLonCoordinates, HybridSigmaPressureCoordinate
+from fme.core.dataset_info import DatasetInfo
+
+@dataclasses.dataclass
+class _CSFNOCase(RegressionCase):
+    """CSFNO applied channel-wise; verifies gradient flow with SHT layers."""
+
+    n_channels: int = 4
+    _img_shape: tuple[int, int] = (16, 32)
+    use_mlp: bool = False
+    filter_type: str = "linear"
+    label: str = "csfno"
+
+    @property
+    def img_shape(self) -> tuple[int, int]:
+        return self._img_shape
+
+    def initialize(self) -> tuple[TensorDict, torch.nn.Module]:
+        torch.manual_seed(0)
+        data = {"x": torch.randn(2, self.n_channels, *self.img_shape)}
+
+        device = fme.get_device()
+        horizontal_coordinate = LatLonCoordinates(
+            lat=torch.zeros(self.img_shape[0], device=device),
+            lon=torch.zeros(self.img_shape[1], device=device),
+        )
+        vertical_coordinate = HybridSigmaPressureCoordinate(
+            ak=torch.arange(7, device=device), bk=torch.arange(7, device=device)
+        )
+        dataset_info = DatasetInfo(
+            horizontal_coordinates=horizontal_coordinate,
+            vertical_coordinate=vertical_coordinate,
+            timestep=datetime.timedelta(hours=6),
+            all_labels={"a", "b"},
+        )
+        selector = ModuleSelector(
+            type="NoiseConditionedSFNO",
+            config={
+                "embed_dim": 8,
+                "noise_embed_dim": 4,
+                "noise_type": "isotropic",
+                "filter_type": self.filter_type,
+                "use_mlp": self.use_mlp,
+                "num_layers": 2,
+                "operator_type": "dhconv",
+                "affine_norms": True,
+                "spectral_transform": "sht",
+            },
+        )
+        module = selector.build(
+            n_in_channels=self.n_channels,
+            n_out_channels=self.n_channels,
+            dataset_info=dataset_info,
+        )
+
+        class _Wrapper(torch.nn.Module):
+            def __init__(self, mod):
+                super().__init__()
+                self.mod = mod
+            def forward(self, data):
+                return self.mod(data["x"], labels=torch.zeros((data["x"].shape[0], 2), device=data["x"].device))
+
+        return data, _Wrapper(module.torch_module)
+
 class _Conv2dModule(torch.nn.Module):
     def __init__(self, conv: torch.nn.Conv2d):
         super().__init__()
@@ -99,6 +166,9 @@ class _LinearCase(RegressionCase):
 
 CASES: dict[str, RegressionCase] = {
     "linear": _LinearCase(),
+    "csfno": _CSFNOCase(),
+    "csfno_mlp": _CSFNOCase(use_mlp=True),
+    "csfno_makani_linear": _CSFNOCase(filter_type="makani-linear"),
 }
 
 
