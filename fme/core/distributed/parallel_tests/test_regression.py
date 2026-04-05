@@ -68,11 +68,12 @@ class RegressionCase(ABC):
 # ---------------------------------------------------------------------------
 
 
-
 import datetime
-from fme.core.registry.module import ModuleSelector
-from fme.core.coordinates import LatLonCoordinates, HybridSigmaPressureCoordinate
+
+from fme.core.coordinates import HybridSigmaPressureCoordinate, LatLonCoordinates
 from fme.core.dataset_info import DatasetInfo
+from fme.core.registry.module import ModuleSelector
+
 
 @dataclasses.dataclass
 class _CSFNOCase(RegressionCase):
@@ -130,10 +131,17 @@ class _CSFNOCase(RegressionCase):
             def __init__(self, mod):
                 super().__init__()
                 self.mod = mod
+
             def forward(self, data):
-                return self.mod(data["x"], labels=torch.zeros((data["x"].shape[0], 2), device=data["x"].device))
+                return self.mod(
+                    data["x"],
+                    labels=torch.zeros(
+                        (data["x"].shape[0], 2), device=data["x"].device
+                    ),
+                )
 
         return data, _Wrapper(module.torch_module)
+
 
 class _Conv2dModule(torch.nn.Module):
     def __init__(self, conv: torch.nn.Conv2d):
