@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 import logging
 from math import ceil
@@ -213,18 +214,24 @@ class CoupledForcingDataLoaderConfig:
         self,
         start_indices: ExplicitIndices,
     ):
+        # Deep copy the atmosphere dataset config to avoid mutating the
+        # original config when update_subset is called later in
+        # InferenceDataset.__init__. Without this, reusing the same config
+        # object across segmented inference runs would carry stale subset
+        # state from a previous segment.
+        atmosphere_dataset = copy.deepcopy(self.atmosphere.dataset)
         if self.ocean is None:
             return InferenceDataLoaderConfig(
                 dataset=CoupledDatasetWithOptionalOceanConfig(
-                    atmosphere=self.atmosphere.dataset,
+                    atmosphere=atmosphere_dataset,
                 ),
                 start_indices=start_indices,
                 num_data_workers=self.num_data_workers,
             )
         return InferenceDataLoaderConfig(
             dataset=CoupledDatasetWithOptionalOceanConfig(
-                atmosphere=self.atmosphere.dataset,
-                ocean=self.ocean.dataset,
+                atmosphere=atmosphere_dataset,
+                ocean=copy.deepcopy(self.ocean.dataset),
             ),
             start_indices=start_indices,
             num_data_workers=self.num_data_workers,
