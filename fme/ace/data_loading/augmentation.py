@@ -163,11 +163,15 @@ class RoundtripConfig:
         from fme.core.distributed import Distributed
 
         nlat, nlon = global_shape
-        full_lmax = nlat
-        full_mmax = nlon // 2 + 1
-        lmax = max(1, int(round(self.fraction_modes_kept * full_lmax)))
-        mmax = max(1, int(round(self.fraction_modes_kept * full_mmax)))
         comm = Distributed.get_instance()
+        # Probe the default (Nyquist) truncation for this grid type — it is
+        # grid-dependent (e.g. (nlat+1)//2 for equiangular, nlat for
+        # legendre-gauss in torch_harmonics 0.9+).
+        probe = comm.get_sht(nlat, nlon, grid=self.grid)
+        default_lmax = int(probe.lmax)
+        default_mmax = int(probe.mmax)
+        lmax = max(1, int(round(self.fraction_modes_kept * default_lmax)))
+        mmax = max(1, int(round(self.fraction_modes_kept * default_mmax)))
         sht = comm.get_sht(nlat, nlon, lmax=lmax, mmax=mmax, grid=self.grid)
         isht = comm.get_isht(nlat, nlon, lmax=lmax, mmax=mmax, grid=self.grid)
         return RoundtripModifier(

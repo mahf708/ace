@@ -130,11 +130,12 @@ def _build_roundtrip_modifier(
     grid: str = "equiangular",
 ) -> RoundtripModifier:
     """Build a RoundtripModifier directly from torch_harmonics, bypassing
-    Distributed (matching the non-distributed singleton behavior)."""
-    full_lmax = nlat
-    full_mmax = nlon // 2 + 1
-    lmax = max(1, int(round(fraction_modes_kept * full_lmax)))
-    mmax = max(1, int(round(fraction_modes_kept * full_mmax)))
+    Distributed (matches non-distributed singleton behavior)."""
+    probe = harmonics.RealSHT(nlat, nlon, grid=grid)
+    default_lmax = int(probe.lmax)
+    default_mmax = int(probe.mmax)
+    lmax = max(1, int(round(fraction_modes_kept * default_lmax)))
+    mmax = max(1, int(round(fraction_modes_kept * default_mmax)))
     sht = harmonics.RealSHT(nlat, nlon, lmax=lmax, mmax=mmax, grid=grid).float()
     isht = harmonics.InverseRealSHT(nlat, nlon, lmax=lmax, mmax=mmax, grid=grid).float()
     return RoundtripModifier(sht=sht, isht=isht, variables=variables)
@@ -243,17 +244,19 @@ def test_roundtrip_modifier_rejects_non_latlon_dims():
         modifier(batch)
 
 
-def test_roundtrip_modifier_full_fraction_is_near_identity():
-    # Keeping every mode should leave the field essentially unchanged
-    # (up to numerical SHT roundtrip error).
+def test_roundtrip_modifier_legendre_gauss_grid():
+    # Smoke test that the modifier works with a non-default grid type.
     n_lat, n_lon = 16, 32
-    modifier = _build_roundtrip_modifier(n_lat, n_lon, fraction_modes_kept=1.0)
-    torch.manual_seed(42)
+    modifier = _build_roundtrip_modifier(
+        n_lat, n_lon, fraction_modes_kept=0.5, grid="legendre-gauss"
+    )
+    torch.manual_seed(0)
     batch = BatchData.new_for_testing(
         names=["T"],
         n_samples=1,
         n_timesteps=1,
         img_shape=(n_lat, n_lon),
     )
-    out = modifier(batch)
-    assert torch.allclose(out.data["T"], batch.data["T"], atol=1e-3)
+    once = modifier(batch)
+    twice = modifier(once)
+    assert torch.allclose(once.data["T"], twice.data["T"], atol=1e-5)
