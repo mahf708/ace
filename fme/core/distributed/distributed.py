@@ -437,6 +437,30 @@ class Distributed:
     def spatial_reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
         return self._distributed.spatial_reduce_sum(tensor)
 
+    def broadcast_spatial(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Broadcast from rank 0 of the spatial group across all spatial ranks.
+
+        Identity when no spatial parallelism is active. Used to synchronize
+        per-call randomness (e.g. noise draws) across spatial co-ranks so that
+        the same logical sample sees consistent values on every rank.
+        """
+        return self._distributed.broadcast_spatial(tensor)
+
+    def gather_spatial_to_root(
+        self, tensor: torch.Tensor, global_img_shape: tuple[int, int]
+    ) -> torch.Tensor | None:
+        """Gather a spatially-sharded tensor onto rank 0 of the spatial group.
+
+        Returns the assembled global tensor on spatial-group rank 0 and
+        ``None`` on other spatial ranks. Identity (returns the input) when
+        no spatial parallelism is active.
+        """
+        return self._distributed.gather_spatial_to_root(tensor, global_img_shape)
+
+    def has_spatial_parallelism(self) -> bool:
+        """Whether spatial (h, w) parallelism is currently active."""
+        return self.world_size != self.total_data_parallel_ranks
+
     def weighted_mean(
         self,
         data: torch.Tensor,

@@ -21,6 +21,20 @@ def _get_gen_shape(gen_data: TensorMapping):
     raise ValueError("No data in gen_data")
 
 
+def _maybe_gather_to_root(
+    tensor: torch.Tensor, global_img_shape: tuple[int, int] | None
+) -> torch.Tensor | None:
+    """Gather a (..., H_local, W_local) tensor onto rank 0 of the spatial group.
+
+    If ``global_img_shape`` is None or no spatial parallelism is active, this
+    is the identity. Otherwise returns the assembled (..., H, W) tensor on
+    spatial-rank 0 and ``None`` on other spatial ranks.
+    """
+    if global_img_shape is None:
+        return tensor
+    return Distributed.get_instance().gather_spatial_to_root(tensor, global_img_shape)
+
+
 @dataclasses.dataclass
 class _ErrorData:
     rmse: TensorDict
@@ -33,13 +47,16 @@ class _ErrorVideoData:
     Record batches of video data and compute statistics on the error.
     """
 
-    def __init__(self, n_timesteps: int):
+    def __init__(
+        self, n_timesteps: int, global_img_shape: tuple[int, int] | None = None
+    ):
         self._mse_data: TensorDict | None = None
         self._min_err_data: TensorDict | None = None
         self._max_err_data: TensorDict | None = None
         self._n_timesteps = n_timesteps
         self._n_batches = torch.zeros([n_timesteps], dtype=torch.int32).cpu()
         self._dist = Distributed.get_instance()
+        self._global_img_shape = global_img_shape
 
     @torch.no_grad()
     def record_batch(
@@ -87,7 +104,7 @@ class _ErrorVideoData:
     @torch.no_grad()
     def get(
         self,
-    ) -> _ErrorData:
+    ) -> _ErrorData | None:
         if (
             self._mse_data is None
             or self._min_err_data is None
@@ -101,11 +118,23 @@ class _ErrorVideoData:
             tensor = self._mse_data[name]
             mse = (tensor / self._n_batches[None, :, None, None]).mean(dim=0)
             mse = self._dist.reduce_mean(mse)
-            rmse_data[name] = torch.sqrt(mse)
+            rmse = torch.sqrt(mse)
+            rmse = _maybe_gather_to_root(rmse, self._global_img_shape)
+            if rmse is None:
+                return None
+            rmse_data[name] = rmse
         for name in sorted(self._min_err_data):
-            min_err_data[name] = self._dist.reduce_min(self._min_err_data[name])
+            local = self._dist.reduce_min(self._min_err_data[name])
+            local = _maybe_gather_to_root(local, self._global_img_shape)
+            if local is None:
+                return None
+            min_err_data[name] = local
         for name in sorted(self._max_err_data):
-            max_err_data[name] = self._dist.reduce_max(self._max_err_data[name])
+            local = self._dist.reduce_max(self._max_err_data[name])
+            local = _maybe_gather_to_root(local, self._global_img_shape)
+            if local is None:
+                return None
+            max_err_data[name] = local
         return _ErrorData(rmse_data, min_err_data, max_err_data)
 
 
@@ -114,12 +143,15 @@ class _MeanVideoData:
     Record batches of video data and compute the mean.
     """
 
-    def __init__(self, n_timesteps: int):
+    def __init__(
+        self, n_timesteps: int, global_img_shape: tuple[int, int] | None = None
+    ):
         self._target_data: TensorDict | None = None
         self._gen_data: TensorDict | None = None
         self._n_timesteps = n_timesteps
         self._n_batches = torch.zeros([n_timesteps], dtype=torch.int32).cpu()
         self._dist = Distributed.get_instance()
+        self._global_img_shape = global_img_shape
 
     @torch.no_grad()
     def record_batch(
@@ -153,19 +185,27 @@ class _MeanVideoData:
         self._n_batches[time_slice] += 1
 
     @torch.no_grad()
-    def get(self) -> tuple[TensorDict, TensorDict]:
+    def get(self) -> tuple[TensorDict, TensorDict] | tuple[None, None]:
         if self._gen_data is None or self._target_data is None:
             raise RuntimeError("No data recorded")
         target_data = {}
         gen_data = {}
         for name in sorted(self._target_data):
             tensor = self._target_data[name]
-            target_data[name] = tensor / self._n_batches[:, None, None]
-            target_data[name] = self._dist.reduce_mean(target_data[name])
+            local = tensor / self._n_batches[:, None, None]
+            local = self._dist.reduce_mean(local)
+            local = _maybe_gather_to_root(local, self._global_img_shape)
+            if local is None:
+                return None, None
+            target_data[name] = local
         for name in sorted(self._gen_data):
             tensor = self._gen_data[name]
-            gen_data[name] = tensor / self._n_batches[:, None, None]
-            gen_data[name] = self._dist.reduce_mean(gen_data[name])
+            local = tensor / self._n_batches[:, None, None]
+            local = self._dist.reduce_mean(local)
+            local = _maybe_gather_to_root(local, self._global_img_shape)
+            if local is None:
+                return None, None
+            gen_data[name] = local
         return gen_data, target_data
 
 
@@ -174,7 +214,9 @@ class _VarianceVideoData:
     Record batches of video data and compute the variance.
     """
 
-    def __init__(self, n_timesteps: int):
+    def __init__(
+        self, n_timesteps: int, global_img_shape: tuple[int, int] | None = None
+    ):
         self._target_means: TensorDict | None = None
         self._gen_means: TensorDict | None = None
         self._target_squares: TensorDict | None = None
@@ -182,6 +224,7 @@ class _VarianceVideoData:
         self._n_timesteps = n_timesteps
         self._n_batches = torch.zeros([n_timesteps], dtype=torch.int32).cpu()
         self._dist = Distributed.get_instance()
+        self._global_img_shape = global_img_shape
 
     @torch.no_grad()
     def record_batch(
@@ -225,7 +268,7 @@ class _VarianceVideoData:
         self._n_batches[time_slice] += 1
 
     @torch.no_grad()
-    def get(self) -> tuple[TensorDict, TensorDict]:
+    def get(self) -> tuple[TensorDict, TensorDict] | tuple[None, None]:
         if (
             self._gen_means is None
             or self._target_means is None
@@ -242,14 +285,22 @@ class _VarianceVideoData:
             mean = self._dist.reduce_mean(mean)
             square = self._target_squares[name] / self._n_batches[:, None, None]
             square = self._dist.reduce_mean(square)
-            target_data[name] = square - mean**2
+            local = square - mean**2
+            local = _maybe_gather_to_root(local, self._global_img_shape)
+            if local is None:
+                return None, None
+            target_data[name] = local
         for name in sorted(self._gen_means):
             tensor = self._gen_means[name]
             mean = tensor / self._n_batches[:, None, None]
             mean = self._dist.reduce_mean(mean)
             square = self._gen_squares[name] / self._n_batches[:, None, None]
             square = self._dist.reduce_mean(square)
-            gen_data[name] = square - mean**2
+            local = square - mean**2
+            local = _maybe_gather_to_root(local, self._global_img_shape)
+            if local is None:
+                return None, None
+            gen_data[name] = local
         return gen_data, target_data
 
 
@@ -293,6 +344,7 @@ class VideoAggregator:
         n_timesteps: int,
         enable_extended_videos: bool,
         variable_metadata: Mapping[str, VariableMetadata] | None = None,
+        global_img_shape: tuple[int, int] | None = None,
     ):
         """
         Args:
@@ -301,18 +353,26 @@ class VideoAggregator:
                 metrics of state evolution
             variable_metadata: Mapping of variable names their metadata that will
                 used in generating logged video captions.
+            global_img_shape: Global ``(H, W)`` shape of the dataset. Required
+                under spatial parallelism so per-pixel video tensors can be
+                gathered onto rank 0 of the spatial group before producing
+                videos. Only spatial-rank 0 returns video data; other spatial
+                ranks return empty mappings/datasets.
         """
         if variable_metadata is None:
             self._variable_metadata: Mapping[str, VariableMetadata] = {}
         else:
             self._variable_metadata = variable_metadata
-        self._mean_data = _MeanVideoData(n_timesteps=n_timesteps)
+        self._global_img_shape = global_img_shape
+        self._mean_data = _MeanVideoData(
+            n_timesteps=n_timesteps, global_img_shape=global_img_shape
+        )
         if enable_extended_videos:
             self._error_data: _ErrorVideoData | None = _ErrorVideoData(
-                n_timesteps=n_timesteps
+                n_timesteps=n_timesteps, global_img_shape=global_img_shape
             )
             self._variance_data: _VarianceVideoData | None = _VarianceVideoData(
-                n_timesteps=n_timesteps
+                n_timesteps=n_timesteps, global_img_shape=global_img_shape
             )
             self._enable_extended_videos = True
         else:
@@ -366,6 +426,9 @@ class VideoAggregator:
             label: Label to prepend to all log keys.
         """
         gen_data, target_data = self._mean_data.get()
+        if gen_data is None or target_data is None:
+            # Non-root spatial rank: no video to produce here.
+            return {}
         video_data = {}
 
         def get_units(name: str) -> str | None:
@@ -397,6 +460,8 @@ class VideoAggregator:
                 )
         if self._error_data is not None:
             data = self._error_data.get()
+            if data is None:
+                return video_data
             for name in data.rmse:
                 video_data[f"rmse/{name}"] = _MaybePairedVideoData(
                     caption=f"RMSE over ensemble for {name}",
@@ -424,6 +489,8 @@ class VideoAggregator:
                 )
         if self._variance_data is not None:
             gen_data, target_data = self._variance_data.get()
+            if gen_data is None or target_data is None:
+                return video_data
             for name in gen_data:
                 video_data[f"gen_var/{name}"] = _MaybePairedVideoData(
                     caption=(
@@ -443,9 +510,14 @@ class VideoAggregator:
     def get_dataset(self) -> xr.Dataset:
         """
         Return video data as an xarray Dataset.
+
+        Under spatial parallelism, only spatial-rank 0 returns a populated
+        dataset; other ranks return an empty Dataset.
         """
         data = self._get_data()
         video_data = {}
+        if not data:
+            return xr.Dataset()
         for label, d in data.items():
             label = label.strip("/").replace("/", "_")  # remove leading slash
             attrs = {}

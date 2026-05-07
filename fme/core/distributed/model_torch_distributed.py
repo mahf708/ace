@@ -37,6 +37,32 @@ from .external.pnd_manager import DistributedManager
 from .non_distributed import DummyWrapper
 from .torch_distributed import _gather_irregular
 
+
+def _spatial_gather(
+    tensor: torch.Tensor,
+    group: torch.distributed.ProcessGroup,
+    gather_list: list[torch.Tensor] | None = None,
+) -> list[torch.Tensor] | None:
+    """Gather a tensor onto rank 0 of ``group``."""
+    rank = torch.distributed.get_rank(group=group)
+    size = torch.distributed.get_world_size(group=group)
+    if gather_list is None and rank == 0:
+        gather_list = [tensor] + [torch.empty_like(tensor) for _ in range(size - 1)]
+    dst = torch.distributed.get_global_rank(group, 0)
+    torch.distributed.gather(
+        tensor, gather_list if rank == 0 else None, dst=dst, group=group
+    )
+    return gather_list
+
+
+def _spatial_reduce_max(
+    tensor: torch.Tensor, group: torch.distributed.ProcessGroup
+) -> torch.Tensor:
+    """All-reduce max across ``group``."""
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.MAX, group=group)
+    return tensor
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -315,13 +341,52 @@ class ModelTorchDistributed(DistributedBackend):
         )
         return output_list[0]  # type: ignore[return-value]
 
-    # For now, let's just borrow the same gather_irregular implementation
     def gather_irregular(self, tensor: torch.Tensor) -> list[torch.Tensor] | None:
-        return _gather_irregular(
+        """Gather samples across the data-parallel group, returning only on
+        world-rank 0.
+
+        Spatial co-ranks at the same data coordinate hold identical sample
+        data (samples are only split across the data-parallel dimension),
+        so we gather across the data group only. Only world-rank 0 returns
+        a non-None list; other ranks (including data-rank-0 of spatial
+        coordinates other than (0, 0)) return None.
+        """
+        gathered = _gather_irregular(
             tensor,
-            self.reduce_max,
-            self.gather,
+            self._reduce_max_data_parallel,
+            self._gather_data_parallel,
         )
+        if self._rank != 0:
+            return None
+        return gathered
+
+    def _reduce_max_data_parallel(self, tensor: torch.Tensor) -> torch.Tensor:
+        torch.distributed.all_reduce(
+            tensor,
+            op=torch.distributed.ReduceOp.MAX,
+            group=self._data_group,
+        )
+        return tensor
+
+    def _gather_data_parallel(
+        self,
+        tensor: torch.Tensor,
+        gather_list: list[torch.Tensor] | None = None,
+    ) -> list[torch.Tensor] | None:
+        rank_in_group = torch.distributed.get_rank(group=self._data_group)
+        size_in_group = torch.distributed.get_world_size(group=self._data_group)
+        if gather_list is None and rank_in_group == 0:
+            gather_list = [tensor] + [
+                torch.empty_like(tensor) for _ in range(size_in_group - 1)
+            ]
+        dst = torch.distributed.get_global_rank(self._data_group, 0)
+        torch.distributed.gather(
+            tensor,
+            gather_list if rank_in_group == 0 else None,
+            dst=dst,
+            group=self._data_group,
+        )
+        return gather_list
 
     @property
     def _device_ids(self) -> list[int] | None:
@@ -361,9 +426,14 @@ class ModelTorchDistributed(DistributedBackend):
     def _register_spatial_grad_hooks(self, module: torch.nn.Module) -> None:
         """All-reduce gradients across spatial ranks after each backward.
 
-        Each spatial rank only sees its local slice of the input, so its
-        gradient is a partial sum.  This hook sums those partials so
-        that every rank applies the same weight update.
+        For **replicated** parameters, each spatial rank only sees its local
+        slice of the input, so its gradient is a partial sum. This hook
+        sums those partials so that every rank applies the same weight
+        update.
+
+        Parameters tagged with ``p._spatially_sharded = True`` hold a
+        different slice on each rank; their gradients must NOT be
+        all-reduced and the hook is skipped for them.
 
         The hook fires via ``register_hook`` on each parameter, which is
         invoked with the per-backward gradient tensor before it is
@@ -384,8 +454,11 @@ class ModelTorchDistributed(DistributedBackend):
             return reduced
 
         for p in module.parameters():
-            if p.requires_grad:
-                p.register_hook(_hook)
+            if not p.requires_grad:
+                continue
+            if getattr(p, "_spatially_sharded", False):
+                continue
+            p.register_hook(_hook)
 
     def barrier(self):
         """Global barrier across all ranks."""
@@ -396,6 +469,67 @@ class ModelTorchDistributed(DistributedBackend):
         if self._h_size > 1 or self._w_size > 1:
             return _AutogradAllReduce.apply(tensor, self._spatial_group)
         return tensor
+
+    def broadcast_spatial(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Broadcast from rank 0 of the spatial group across all spatial ranks."""
+        if self._h_size <= 1 and self._w_size <= 1:
+            return tensor
+        src = torch.distributed.get_global_rank(self._spatial_group, 0)
+        torch.distributed.broadcast(tensor, src=src, group=self._spatial_group)
+        return tensor
+
+    def gather_spatial_to_root(
+        self, tensor: torch.Tensor, global_img_shape: tuple[int, int]
+    ) -> torch.Tensor | None:
+        """Gather spatially-sharded slices to spatial-rank 0.
+
+        Returns the assembled global tensor on spatial-group rank 0 and
+        ``None`` on all other spatial ranks. ``data`` ranks are independent
+        (each data rank gathers its own copy across the spatial sub-mesh).
+        """
+        if self._h_size <= 1 and self._w_size <= 1:
+            return tensor
+
+        spatial_size = self._h_size * self._w_size
+        spatial_rank = torch.distributed.get_rank(group=self._spatial_group)
+        leading = tuple(tensor.shape[:-2])
+
+        # Gather metadata (local slice indices) so the root can place
+        # contributions into the global buffer at the right positions.
+        local_slices = self._get_local_spatial_shape(*global_img_shape)
+        gathered_slices: list[Any] | None = (
+            [None for _ in range(spatial_size)] if spatial_rank == 0 else None
+        )
+        torch.distributed.gather_object(
+            local_slices,
+            gathered_slices,
+            dst=torch.distributed.get_global_rank(self._spatial_group, 0),
+            group=self._spatial_group,
+        )
+
+        # Each rank's local tensor has its own shape; gather via
+        # gather_irregular over the spatial group (pads to common shape,
+        # then unpads).
+        gathered_tensors = _gather_irregular(
+            tensor.contiguous(),
+            lambda t: _spatial_reduce_max(t, self._spatial_group),
+            lambda t, gather_list=None: _spatial_gather(
+                t, self._spatial_group, gather_list
+            ),
+        )
+
+        if spatial_rank != 0:
+            return None
+        if gathered_tensors is None or gathered_slices is None:
+            return None
+        global_buffer = torch.zeros(
+            (*leading, *global_img_shape),
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+        for sl, t in zip(gathered_slices, gathered_tensors):
+            global_buffer[(..., *sl)] = t
+        return global_buffer
 
     def weighted_mean(
         self,

@@ -1290,12 +1290,26 @@ class Stepper:
         Returns:
             The state of the stepper.
         """
-        return {
+        from fme.core.distributed import Distributed
+
+        dist = Distributed.get_instance()
+        state = {
             "config": self._config.as_loaded_dict(),
             "dataset_info": self._dataset_info.get_state(),
             "step": self._step_obj.get_state(),
             "training_history": self._training_history.get_state(),
         }
+        if dist.has_spatial_parallelism():
+            # Mark the saved state as topology-sharded. The (h, w) topology
+            # is recorded so a future migration utility can detect mismatch
+            # and refuse to load. Today this checkpoint is reloadable only
+            # at the same topology (or at single-rank with the load-state-
+            # dict pre-hooks doing shape reconciliation per-parameter).
+            state["spatial_topology"] = {
+                "h": dist._distributed._h_size,  # type: ignore[attr-defined]
+                "w": dist._distributed._w_size,  # type: ignore[attr-defined]
+            }
+        return state
 
     def load_state(self, state: dict[str, Any]) -> None:
         """

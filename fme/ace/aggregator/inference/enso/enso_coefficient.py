@@ -91,11 +91,13 @@ class EnsoCoefficientEvaluatorAggregator:
         timestep: datetime.timedelta,
         gridded_operations: GriddedOperations,
         variable_metadata: Mapping[str, VariableMetadata] | None = None,
+        global_img_shape: tuple[int, int] | None = None,
     ):
         self._sample_index_series: list[xr.DataArray | None] = get_sample_index_series(
             self.enso_index, initial_time, n_forward_timesteps, timestep
         )
         self._ops = gridded_operations
+        self._global_img_shape = global_img_shape
         if variable_metadata is not None:
             self._variable_metadata: Mapping[str, VariableMetadata] = variable_metadata
         else:
@@ -127,9 +129,9 @@ class EnsoCoefficientEvaluatorAggregator:
         time = data.time
         target_data = data.target
         gen_data = data.prediction
-        assert time.sizes["sample"] == len(
-            self._sample_index_series
-        ), "number of index series must match number of samples"
+        assert time.sizes["sample"] == len(self._sample_index_series), (
+            "number of index series must match number of samples"
+        )
         for i_sample, sample_index_series in enumerate(self._sample_index_series):
             if sample_index_series is not None:
                 sample_index_series_window = sample_index_series.sel(
@@ -183,7 +185,21 @@ class EnsoCoefficientEvaluatorAggregator:
                     ).to(device=get_device())
         return coefficients
 
-    def _get_coefficients(self) -> tuple[TensorDict | None, TensorDict | None]:
+    def _get_coefficients(
+        self,
+    ) -> tuple[TensorDict | None, TensorDict | None, dict[str, float]]:
+        """Compute the coefficients and area-weighted RMSE between target and
+        generated coefficients.
+
+        Returns ``(target_coefficients, gen_coefficients, rmses)`` where the
+        first two are non-None only on world-rank 0 (data-parallel-reduced
+        local-slice maps; gather to global is the caller's responsibility),
+        and ``rmses`` is the area-weighted RMSE per variable, computed on
+        every rank via ``ops.area_weighted_rmse`` (which is spatial-aware
+        and produces the correct global scalar on every rank). Computing
+        RMSE here ensures every rank participates in the spatial collective
+        regardless of which rank ends up returning logs.
+        """
         dist = Distributed.get_instance()
         target_coefficients = self._compute_coefficients("target")
         gen_coefficients = self._compute_coefficients("gen")
@@ -229,25 +245,105 @@ class EnsoCoefficientEvaluatorAggregator:
                 .mean(dim=0)
                 .to(device=get_device())
             )
-        # average coefficients across processes
-        if target_coefficients_all:
-            reduced_target_coefficients = reduce_data(dist, target_coefficients_all)
-        else:
-            reduced_target_coefficients = None
-        if gen_coefficients_all:
-            reduced_gen_coefficients = reduce_data(dist, gen_coefficients_all)
-        else:
-            reduced_gen_coefficients = None
-        return reduced_target_coefficients, reduced_gen_coefficients
+        # Average coefficients across data-parallel processes on every rank
+        # (no is_root() gating), so every rank can participate in the
+        # subsequent spatial collective inside ``area_weighted_rmse``.
+        target_dp_meaned = _data_parallel_mean(dist, target_coefficients_all)
+        gen_dp_meaned = _data_parallel_mean(dist, gen_coefficients_all)
+
+        # Compute spatial-aware area-weighted RMSE on the data-parallel-mean
+        # local-slice coefficient maps. Every rank calls this for the
+        # spatial all-reduce to complete.
+        rmses: dict[str, float] = self._compute_local_rmse(
+            target_dp_meaned, gen_dp_meaned
+        )
+
+        # Return the data-parallel-meaned local-slice coefficient maps on
+        # every rank — the caller is responsible for gathering across the
+        # spatial group (which is itself a collective and needs every rank
+        # to participate). Returning ``None`` on non-root ranks would
+        # deadlock the spatial gather.
+        reduced_target_coefficients = target_dp_meaned if target_dp_meaned else None
+        reduced_gen_coefficients = gen_dp_meaned if gen_dp_meaned else None
+        return reduced_target_coefficients, reduced_gen_coefficients, rmses
+
+    def _compute_local_rmse(
+        self,
+        target_local: TensorDict,
+        gen_local: TensorDict,
+    ) -> dict[str, float]:
+        """Compute area-weighted RMSE per variable on local-slice tensors.
+
+        ``ops.area_weighted_rmse`` uses ``Distributed.weighted_mean`` which
+        does a spatial all-reduce, so the resulting scalar is correct on
+        every spatial rank. Every rank must call this for the collective
+        to complete.
+        """
+        rmses = {}
+        for name in sorted(gen_local.keys()):
+            if name not in target_local:
+                continue
+            rmse = float(
+                self._ops.area_weighted_rmse(
+                    predicted=gen_local[name],
+                    truth=target_local[name],
+                    name=name,
+                )
+                .cpu()
+                .numpy()
+            )
+            rmses[name] = rmse
+        return rmses
+
+    def _gather_coefficients_to_root(
+        self,
+        target_local: TensorDict | None,
+        gen_local: TensorDict | None,
+    ) -> tuple[TensorDict | None, TensorDict | None]:
+        """Gather per-grid-cell coefficient maps onto rank 0 of the spatial
+        group. Returns (None, None) on non-root spatial ranks.
+
+        With no spatial parallelism, returns the inputs unchanged.
+        """
+        if target_local is None or gen_local is None:
+            return None, None
+        dist = Distributed.get_instance()
+        if self._global_img_shape is None or not dist.has_spatial_parallelism():
+            return target_local, gen_local
+        target_global: TensorDict = {}
+        gen_global: TensorDict = {}
+        for name in sorted(target_local.keys()):
+            g = dist.gather_spatial_to_root(target_local[name], self._global_img_shape)
+            if g is None:
+                return None, None
+            target_global[name] = g
+        for name in sorted(gen_local.keys()):
+            g = dist.gather_spatial_to_root(gen_local[name], self._global_img_shape)
+            if g is None:
+                return None, None
+            gen_global[name] = g
+        return target_global, gen_global
 
     @torch.no_grad()
     def get_logs(self, label: str) -> dict[str, Any]:
-        target_coefficients, gen_coefficients = self._get_coefficients()
-        if target_coefficients is None or gen_coefficients is None:
-            return {}  # only the root process returns logs
+        # ``_get_coefficients`` performs the data-parallel reduce + the
+        # spatial-aware RMSE computation on every rank, then returns
+        # the coefficient maps non-None only on world-rank 0.
+        target_coefficients, gen_coefficients, metrics_dict = self._get_coefficients()
+
+        # Gather coefficient maps for plotting. Non-root spatial ranks of
+        # rank-0-of-data return None and we skip plotting on them.
+        target_global, gen_global = self._gather_coefficients_to_root(
+            target_coefficients, gen_coefficients
+        )
+        if target_global is None or gen_global is None:
+            return {}
+        if not Distributed.get_instance().is_root():
+            return {}
+
         wandb = WandB.get_instance()
         images, metrics = {}, {}
-        for name in gen_coefficients.keys():
+        for name in gen_global.keys():
             if name in self._variable_metadata:
                 caption_name = self._variable_metadata[name].long_name
                 caption_units = self._variable_metadata[name].units
@@ -259,25 +355,17 @@ class EnsoCoefficientEvaluatorAggregator:
             )
             panels = [
                 [
-                    target_coefficients[name].cpu().numpy(),
-                    gen_coefficients[name].cpu().numpy(),
+                    target_global[name].cpu().numpy(),
+                    gen_global[name].cpu().numpy(),
                 ]
             ]
             coefficient_map = plot_paneled_data(
                 data=panels, diverging=True, caption=caption
             )
             images.update({f"coefficient_maps/{name}": coefficient_map})
-            rmse = float(
-                self._ops.area_weighted_rmse(
-                    predicted=gen_coefficients[name],
-                    truth=target_coefficients[name],
-                    name=name,
-                )
-                .cpu()
-                .numpy()
-            )
+            rmse = metrics_dict[name]
             metrics.update({f"rmse/{name}": rmse})
-            diff = gen_coefficients[name] - target_coefficients[name]
+            diff = gen_global[name] - target_global[name]
             caption = self._image_captions["coefficient_difference_map"].format(
                 name=caption_name, units=caption_units
             )
@@ -302,23 +390,33 @@ class EnsoCoefficientEvaluatorAggregator:
 
     def get_dataset(self) -> xr.Dataset:
         """Get the coefficients as an xarray Dataset."""
-        target_coefficients, gen_coefficients = self._get_coefficients()
+        target_coefficients, gen_coefficients, _rmses = self._get_coefficients()
         if target_coefficients is None or gen_coefficients is None:
+            # No data was recorded; spatial collectives still need to be
+            # safe to call. _gather_coefficients_to_root short-circuits on
+            # None inputs.
+            return xr.Dataset()
+        target_global, gen_global = self._gather_coefficients_to_root(
+            target_coefficients, gen_coefficients
+        )
+        if target_global is None or gen_global is None:
+            return xr.Dataset()
+        if not Distributed.get_instance().is_root():
             return xr.Dataset()
         target_coefficients_ds = xr.Dataset(
             {
                 name: (
                     ["lat", "lon"],
-                    target_coefficients[name].cpu().numpy(),
+                    target_global[name].cpu().numpy(),
                     self._get_var_attrs(name),
                 )
-                for name in target_coefficients.keys()
+                for name in target_global.keys()
             }
         ).expand_dims({"source": ["target"]})
         gen_coefficients_ds = xr.Dataset(
             {
-                name: (["lat", "lon"], gen_coefficients[name].cpu().numpy())
-                for name in gen_coefficients.keys()
+                name: (["lat", "lon"], gen_global[name].cpu().numpy())
+                for name in gen_global.keys()
             }
         ).expand_dims({"source": ["prediction"]})
         return xr.concat([target_coefficients_ds, gen_coefficients_ds], dim="source")
@@ -430,6 +528,23 @@ def data_index_covariance(
     view_dims = [1 if i != index_dim else n_index for i in range(data.dim())]
     index_values_broadcast = index_values.view(*view_dims)
     return (data * index_values_broadcast).sum(dim=index_dim)
+
+
+def _data_parallel_mean(dist: Distributed, rank_tensor_dict: TensorDict) -> TensorDict:
+    """Mean tensors across the data-parallel group on every rank.
+
+    Unlike :func:`reduce_data`, this returns the reduced dict on **every**
+    rank (no is_root() gating), so callers can still participate in
+    downstream spatial collectives.
+    """
+    if not rank_tensor_dict:
+        return {}
+    if dist.is_distributed():
+        names = sorted(list(rank_tensor_dict.keys()))
+        rank_tensor = torch.stack([rank_tensor_dict[name] for name in names], dim=0)
+        reduced_tensor = dist.reduce_mean(rank_tensor)
+        return {name: reduced_tensor[i] for i, name in enumerate(names)}
+    return rank_tensor_dict
 
 
 def reduce_data(dist: Distributed, rank_tensor_dict: TensorDict) -> TensorDict | None:

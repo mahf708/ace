@@ -14,6 +14,7 @@ import xarray as xr
 from fme.ace.data_loading.batch_data import BatchData, PairedData, PrognosticState
 from fme.core.cloud import to_netcdf_via_inter_filesystem_copy
 from fme.core.dataset.data_typing import VariableMetadata
+from fme.core.distributed import Distributed
 from fme.core.generics.writer import WriterABC
 
 from .dataset_metadata import DatasetMetadata
@@ -84,6 +85,7 @@ class DataWriterConfig:
         variable_metadata: Mapping[str, VariableMetadata],
         coords: Mapping[str, np.ndarray],
         dataset_metadata: DatasetMetadata,
+        global_img_shape: tuple[int, int] | None = None,
     ) -> "PairedDataWriter":
         return PairedDataWriter(
             path=experiment_dir,
@@ -98,6 +100,7 @@ class DataWriterConfig:
             time_coarsen=self.time_coarsen,
             dataset_metadata=dataset_metadata,
             files=self.files,
+            global_img_shape=global_img_shape,
         )
 
     def build(
@@ -109,6 +112,7 @@ class DataWriterConfig:
         variable_metadata: Mapping[str, VariableMetadata],
         coords: Mapping[str, np.ndarray],
         dataset_metadata: DatasetMetadata,
+        global_img_shape: tuple[int, int] | None = None,
     ) -> "DataWriter":
         return DataWriter(
             path=experiment_dir,
@@ -123,6 +127,7 @@ class DataWriterConfig:
             time_coarsen=self.time_coarsen,
             dataset_metadata=dataset_metadata,
             files=self.files,
+            global_img_shape=global_img_shape,
         )
 
 
@@ -141,6 +146,7 @@ class PairedDataWriter(WriterABC[PrognosticState, PairedData]):
         dataset_metadata: DatasetMetadata,
         time_coarsen: TimeCoarsenConfig | None = None,
         files: list[FileWriterConfig] | None = None,
+        global_img_shape: tuple[int, int] | None = None,
     ):
         """
         Args:
@@ -160,13 +166,19 @@ class PairedDataWriter(WriterABC[PrognosticState, PairedData]):
             dataset_metadata: Metadata for the dataset.
             time_coarsen: Configuration for time coarsening of written outputs.
             files: Configurations for individual data writers.
-
+            global_img_shape: Global ``(H, W)`` shape of the dataset. When set,
+                paired batches and prognostic states passed to ``write`` /
+                ``append_batch`` are gathered onto rank 0 of the spatial
+                group before being handed to the underlying writers; only
+                world-rank 0 writes. Pass ``None`` (the default) to disable
+                the gather (e.g. when there is no spatial parallelism).
         """
         self._writers: list[PairedSubwriter] = []
         self.path = path
         self.coords = coords
         self.variable_metadata = variable_metadata
         self.dataset_metadata = dataset_metadata
+        self._global_img_shape = global_img_shape
 
         def _time_coarsen_builder(data_writer: PairedSubwriter) -> PairedSubwriter:
             if time_coarsen is not None:
@@ -220,6 +232,16 @@ class PairedDataWriter(WriterABC[PrognosticState, PairedData]):
             data: the data to be written.
             filename: the filename to use for the netCDF file.
         """
+        # Under spatial parallelism, gather to spatial-rank 0 and only write
+        # there. Non-root spatial ranks return early. Without spatial
+        # parallelism, ``gather_spatial_to_root`` is identity.
+        if self._global_img_shape is not None:
+            gathered = data.gather_spatial_to_root(self._global_img_shape)
+            if gathered is None:
+                return
+            data = gathered
+        if not Distributed.get_instance().is_root():
+            return
         _write(
             data=data.as_batch_data(),
             path=self.path,
@@ -239,6 +261,13 @@ class PairedDataWriter(WriterABC[PrognosticState, PairedData]):
         Args:
             batch: Prediction and target data.
         """
+        if self._global_img_shape is not None:
+            gathered = batch.gather_spatial_to_root(self._global_img_shape)
+            if gathered is None:
+                return
+            batch = gathered
+        if not Distributed.get_instance().is_root():
+            return
         for writer in self._writers:
             writer.append_batch(
                 target=dict(batch.reference),
@@ -250,10 +279,14 @@ class PairedDataWriter(WriterABC[PrognosticState, PairedData]):
         """
         Flush the data to disk.
         """
+        if not Distributed.get_instance().is_root():
+            return
         for writer in self._writers:
             writer.flush()
 
     def finalize(self):
+        if not Distributed.get_instance().is_root():
+            return
         for writer in self._writers:
             writer.finalize()
 
@@ -325,6 +358,7 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
         dataset_metadata: DatasetMetadata,
         time_coarsen: TimeCoarsenConfig | None = None,
         files: list[FileWriterConfig] | None = None,
+        global_img_shape: tuple[int, int] | None = None,
     ):
         """
         Args:
@@ -343,6 +377,10 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
             dataset_metadata: Metadata for the dataset.
             time_coarsen: Configuration for time coarsening of raw outputs.
             files: Configurations for individual data writers.
+            global_img_shape: Global ``(H, W)`` shape of the dataset. When set,
+                batches passed to ``write`` / ``append_batch`` are gathered
+                onto rank 0 of the spatial group before being written; only
+                world-rank 0 writes.
         """
         self._writers: list[Subwriter] = []
         if "face" in coords:
@@ -401,6 +439,7 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
         self.variable_metadata = variable_metadata
         self.dataset_metadata = dataset_metadata
         self.coords = coords
+        self._global_img_shape = global_img_shape
 
     def append_batch(self, batch: PairedData):
         """
@@ -410,6 +449,13 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
         Args:
             batch: Paired data to be written.
         """
+        if self._global_img_shape is not None:
+            gathered = batch.gather_spatial_to_root(self._global_img_shape)
+            if gathered is None:
+                return
+            batch = gathered
+        if not Distributed.get_instance().is_root():
+            return
         merged = {**batch.prediction, **batch.forcing}
         unpaired_batch = BatchData.new_on_device(
             data=merged,
@@ -429,14 +475,25 @@ class DataWriter(WriterABC[PrognosticState, PairedData]):
         """
         Flush the data to disk.
         """
+        if not Distributed.get_instance().is_root():
+            return
         for writer in self._writers:
             writer.flush()
 
     def finalize(self):
+        if not Distributed.get_instance().is_root():
+            return
         for writer in self._writers:
             writer.finalize()
 
     def write(self, data: PrognosticState, filename: str):
+        if self._global_img_shape is not None:
+            gathered = data.gather_spatial_to_root(self._global_img_shape)
+            if gathered is None:
+                return
+            data = gathered
+        if not Distributed.get_instance().is_root():
+            return
         _write(
             data=data.as_batch_data(),
             path=self.path,

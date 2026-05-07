@@ -183,11 +183,20 @@ class InferenceGriddedData(InferenceDataABC[PrognosticState, BatchData]):
         self._properties = self._global_properties.localize()
         self._n_initial_conditions: int | None = None
         if isinstance(initial_condition, PrognosticStateDataRequirements):
+            # ``self.loader`` already scatters batches; the initial condition
+            # extracted from it is therefore local-shape.
             self._initial_condition: PrognosticState = _get_initial_condition(
                 self.loader, initial_condition
             )
         else:
-            self._initial_condition = initial_condition.to_device()
+            # The caller may have constructed ``initial_condition`` from a
+            # globally-shaped dataset (e.g. inference.py:get_initial_condition
+            # which reads ``xr.open_dataset`` directly). Scatter it to the
+            # local spatial chunk so it matches the batches yielded by
+            # ``self.loader``.
+            self._initial_condition = initial_condition.to_device().scatter_spatial(
+                self._global_img_shape
+            )
 
     @property
     def loader(self) -> DataLoader[BatchData]:
@@ -195,6 +204,13 @@ class InferenceGriddedData(InferenceDataABC[PrognosticState, BatchData]):
             return batch.to_device().scatter_spatial(self._global_img_shape)
 
         return SizedMap(scatter_and_on_device, self._loader)
+
+    @property
+    def global_img_shape(self) -> tuple[int, int]:
+        """The full (lat, lon) shape of the dataset, before any spatial
+        sharding. Use this to build downstream gather logic.
+        """
+        return self._global_img_shape
 
     @property
     def variable_metadata(self) -> dict[str, VariableMetadata]:

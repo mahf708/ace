@@ -16,6 +16,7 @@
 
 import dataclasses
 import math
+import warnings
 from typing import Callable, Tuple
 
 import torch
@@ -28,6 +29,50 @@ from fme.core.distributed import Distributed
 from fme.core.benchmark.timer import Timer, NullTimer
 
 from .initialization import trunc_normal_
+
+
+def _make_local_pos_embed_load_hook(
+    param_name: str,
+    img_shape: tuple[int, int],
+) -> Callable:
+    """Pre-hook that slices a legacy global-shape ``pos_embed`` tensor down
+    to the local spatial extent expected by this rank. New (already-local)
+    checkpoints pass through unchanged.
+    """
+
+    def _hook(
+        module: torch.nn.Module,
+        state_dict: dict,
+        prefix: str,
+        local_metadata: dict,
+        strict: bool,
+        missing_keys: list,
+        unexpected_keys: list,
+        error_msgs: list,
+    ) -> None:
+        key = prefix + param_name
+        if key not in state_dict:
+            return
+        tensor = state_dict[key]
+        local_param = getattr(module, param_name, None)
+        if local_param is None:
+            return
+        if tensor.shape[-2:] == tuple(local_param.shape[-2:]):
+            return
+        if tensor.shape[-2:] != img_shape:
+            return
+        h_slice, w_slice = Distributed.get_instance().get_local_slices(img_shape)
+        state_dict[key] = tensor[(..., h_slice, w_slice)].contiguous()
+        warnings.warn(
+            f"Loaded legacy global-shape '{key}' (shape {tuple(tensor.shape)}) "
+            "and sliced it to the local spatial extent. Re-save the "
+            "checkpoint to suppress this warning.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    return _hook
+
 
 # wrap fft, to unify interface to spectral transforms
 # import global convolution and non-linear spectral layers
@@ -436,10 +481,19 @@ def get_lat_lon_sfnonet(
     )
     itrans = dist.get_isht(h, w, lmax=modes_lat, mmax=modes_lon, grid="legendre-gauss")
 
+    h_slice, w_slice = dist.get_local_slices((h, w))
+
     def get_pos_embed():
-        pos_embed = nn.Parameter(torch.zeros(1, params.embed_dim, h, w))
+        # Draw the global parameter and slice to local so per-rank values
+        # match what a single-rank run would have placed at the same
+        # spatial coordinates (preserves cross-topology equivalence).
+        global_pos = torch.zeros(1, params.embed_dim, h, w)
+        trunc_normal_(global_pos, std=0.02)
+        pos_embed = nn.Parameter(global_pos[..., h_slice, w_slice].clone().contiguous())
         pos_embed.is_shared_mp = ["matmul"]
-        trunc_normal_(pos_embed, std=0.02)
+        # Mark as spatially sharded so the spatial gradient all-reduce hook
+        # in ModelTorchDistributed skips it (each rank holds a different slice).
+        pos_embed._spatially_sharded = True  # type: ignore[attr-defined]
         return pos_embed
 
     net = SphericalFourierNeuralOperatorNet(
@@ -675,6 +729,9 @@ class SphericalFourierNeuralOperatorNet(torch.nn.Module):
         # learned position embedding
         if self._use_pos_embed:
             self.pos_embed = get_pos_embed()
+            self._register_load_state_dict_pre_hook(
+                _make_local_pos_embed_load_hook("pos_embed", img_shape)
+            )
         else:
             self.pos_embed = None
 
@@ -715,7 +772,10 @@ class SphericalFourierNeuralOperatorNet(torch.nn.Module):
             x = self.encoder(x)
 
         if self.pos_embed is not None:
-            x = x + self.pos_embed[..., self._spatial_h_slice, self._spatial_w_slice]
+            # pos_embed is stored at the local spatial extent (sharded across
+            # spatial ranks); see ``get_pos_embed`` factory in
+            # ``get_lat_lon_sfnonet``.
+            x = x + self.pos_embed
 
         # maybe clean the padding just in case
 

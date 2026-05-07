@@ -256,6 +256,7 @@ class InferenceConfig:
         timestep: datetime.timedelta,
         coords: Mapping[str, np.ndarray],
         variable_metadata: Mapping[str, VariableMetadata],
+        global_img_shape: tuple[int, int] | None = None,
     ) -> PairedDataWriter:
         return self.data_writer.build_paired(
             experiment_dir=self.experiment_dir,
@@ -266,6 +267,7 @@ class InferenceConfig:
             variable_metadata=variable_metadata,
             coords=coords,
             dataset_metadata=DatasetMetadata.from_env(),
+            global_img_shape=global_img_shape,
         )
 
 
@@ -351,6 +353,7 @@ def run_inference_from_config(config: InferenceConfig):
             timestep=data.timestep,
             coords=data.coords,
             variable_metadata=variable_metadata,
+            global_img_shape=data.global_img_shape,
         )
     logging.info("Starting inference")
     logger = get_record_to_wandb(label="inference")

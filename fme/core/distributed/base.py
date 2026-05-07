@@ -154,6 +154,29 @@ class DistributedBackend(ABC):
         ...
 
     @abstractmethod
+    def broadcast_spatial(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Broadcast a tensor from rank 0 of the spatial group to all spatial ranks.
+
+        Identity when there is no spatial parallelism. Used to keep
+        per-call randomness (noise draws) consistent across spatial co-ranks.
+        """
+        ...
+
+    @abstractmethod
+    def gather_spatial_to_root(
+        self, tensor: torch.Tensor, global_img_shape: tuple[int, int]
+    ) -> torch.Tensor | None:
+        """Gather a spatially-sharded tensor onto rank 0 of the spatial group.
+
+        The last two dimensions of ``tensor`` are the local spatial slice;
+        the rest are leading dimensions and must match across spatial co-ranks.
+
+        Returns the assembled global tensor on spatial-rank 0 and ``None`` on
+        other spatial ranks. Identity when no spatial parallelism.
+        """
+        ...
+
+    @abstractmethod
     def weighted_mean(
         self,
         data: torch.Tensor,

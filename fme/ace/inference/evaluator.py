@@ -271,6 +271,7 @@ class InferenceEvaluatorConfig:
         timestep: datetime.timedelta,
         variable_metadata: Mapping[str, VariableMetadata],
         coords: Mapping[str, np.ndarray],
+        global_img_shape: tuple[int, int] | None = None,
     ) -> PairedDataWriter:
         # initial_condition_times from data.initial_time already has one entry per
         # sample (n_ic * n_ensemble_per_ic); do not repeat by n_ensemble_per_ic again.
@@ -282,6 +283,7 @@ class InferenceEvaluatorConfig:
             variable_metadata=variable_metadata,
             coords=coords,
             dataset_metadata=DatasetMetadata.from_env(),
+            global_img_shape=global_img_shape,
         )
 
 
@@ -433,6 +435,7 @@ def run_evaluator_from_config(config: InferenceEvaluatorConfig):
             timestep=data.timestep,
             variable_metadata=variable_metadata,
             coords=data.coords,
+            global_img_shape=data.global_img_shape,
         )
 
     logging.info("Starting inference")

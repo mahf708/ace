@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import math
+import warnings
+
 import torch
 import torch.nn as nn
 
@@ -130,40 +132,49 @@ class SpectralConvS2(nn.Module):
         self._preserve_global_mean = preserve_global_mean
         self._has_global_mean = l_start == 0
 
-        scale = math.sqrt(1 / (in_channels)) * torch.ones(self.modes_lat, 1, 1, 2)
+        # Build a global-shape init tensor and slice it to local so per-rank
+        # values match what a single-rank build would have placed at the
+        # same modes (preserves cross-topology equivalence).
+        global_scale = math.sqrt(1 / (in_channels)) * torch.ones(
+            self.modes_lat, 1, 1, 2
+        )
         # seemingly the first weight is not really complex, so we need to account for that
-        scale[0, :] *= math.sqrt(2.0)
+        global_scale[0, :] *= math.sqrt(2.0)
 
-        weight_shape = [
+        global_weight = global_scale * torch.randn(
             num_groups,
             self.modes_lat,
             out_channels // num_groups,
             in_channels // num_groups,
-        ]
-
-        self.weight = nn.Parameter(scale * torch.randn(*weight_shape, 2))
+            2,
+        )
+        self.weight = nn.Parameter(global_weight[:, self._l_slice].clone().contiguous())
+        self.weight._spatially_sharded = True  # type: ignore[attr-defined]
 
         self.lora_rank = lora_rank
         if lora_rank > 0:
+            global_lora_A = global_scale * torch.randn(
+                num_groups,
+                self.modes_lat,
+                lora_rank,
+                in_channels // num_groups,
+                2,
+            )
             self.lora_A = nn.Parameter(
-                scale
-                * torch.randn(
-                    num_groups,
-                    self.modes_lat,
-                    lora_rank,
-                    in_channels // num_groups,
-                    2,
-                )
+                global_lora_A[:, self._l_slice].clone().contiguous()
+            )
+            self.lora_A._spatially_sharded = True  # type: ignore[attr-defined]
+            global_lora_B = torch.zeros(
+                num_groups,
+                self.modes_lat,
+                out_channels // num_groups,
+                lora_rank,
+                2,
             )
             self.lora_B = nn.Parameter(
-                torch.zeros(
-                    num_groups,
-                    self.modes_lat,
-                    out_channels // num_groups,
-                    lora_rank,
-                    2,
-                )
+                global_lora_B[:, self._l_slice].clone().contiguous()
             )
+            self.lora_B._spatially_sharded = True  # type: ignore[attr-defined]
             self.lora_alpha = lora_alpha if lora_alpha is not None else lora_rank
             self.lora_scaling = self.lora_alpha / lora_rank
         else:
@@ -176,9 +187,16 @@ class SpectralConvS2(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        # rewrite old checkpoints on load
+        # rewrite old checkpoints on load. ORDER MATTERS:
+        #   1. _add_singleton_group_dim — adds a leading group dim if absent.
+        #   2. _reorder_weight_dims — permutes to the canonical layout
+        #      (group, nlat, out_ch/g, in_ch/g, 2).
+        #   3. _slice_lat_modes_to_local — slices the lat dim down to this
+        #      rank's local extent (only if the loaded weight is at the
+        #      global modes_lat size; already-sharded saves pass through).
         self.register_load_state_dict_pre_hook(self._add_singleton_group_dim)
         self.register_load_state_dict_pre_hook(self._reorder_weight_dims)
+        self.register_load_state_dict_pre_hook(self._slice_lat_modes_to_local)
 
     @staticmethod
     def _reorder_weight_dims(
@@ -268,6 +286,53 @@ class SpectralConvS2(nn.Module):
         if weight.shape == ungrouped_shape:
             state_dict[key] = weight.view(1, *ungrouped_shape)
 
+    @staticmethod
+    def _slice_lat_modes_to_local(
+        module: "SpectralConvS2",
+        state_dict: dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: dict,
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        """Slice ``weight`` / ``lora_A`` / ``lora_B`` along the lat-mode axis
+        to this rank's local extent if they were saved at the global extent.
+
+        Runs after the layout-canonicalising hooks
+        (``_add_singleton_group_dim`` and ``_reorder_weight_dims``), so the
+        lat-mode dim is at index 1 for ``weight`` / ``lora_A`` / ``lora_B``.
+        """
+        warned = False
+        for name in ("weight", "lora_A", "lora_B"):
+            key = prefix + name
+            if key not in state_dict:
+                continue
+            tensor = state_dict[key]
+            if tensor.ndim < 2:
+                continue
+            local_param = getattr(module, name, None)
+            if local_param is None:
+                continue
+            if tensor.shape[1] == local_param.shape[1]:
+                # Already-local checkpoint (sharded save at this topology).
+                continue
+            if tensor.shape[1] != module.modes_lat:
+                # Unrecognized lat dim; let load_state_dict surface the error.
+                continue
+            state_dict[key] = tensor[:, module._l_slice].contiguous()
+            if not warned:
+                warnings.warn(
+                    f"Loaded legacy global-mode '{key}' "
+                    f"(shape {tuple(tensor.shape)}) and sliced it to the "
+                    "local lat-mode extent. Re-save the checkpoint to "
+                    "suppress this warning.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                warned = True
+
     def forward(self, x, timer: Timer = NullTimer()):  # pragma: no cover
         dtype = x.dtype
         residual = x
@@ -286,8 +351,8 @@ class SpectralConvS2(nn.Module):
         assert C % self.num_groups == 0
         x = x.reshape(B, self.num_groups, C // self.num_groups, H, W)
 
-        # Slice global weights to the local spectral partition (lat only).
-        weight_local = self.weight[:, self._l_slice]
+        # ``self.weight`` (and lora_A/lora_B if present) are stored at the
+        # local lat-mode extent already.
         if self.lora_A is not None and self.lora_B is not None:
             with timer.child("lora_update"):
                 lora_update = _contract_lora(
@@ -302,7 +367,7 @@ class SpectralConvS2(nn.Module):
             xp = torch.zeros_like(x)
             xp[..., : self.modes_lat_local, : self.modes_lon] = _contract_dhconv(
                 x[..., : self.modes_lat_local, : self.modes_lon],
-                weight_local,
+                self.weight,
             )
             xp = xp + self.lora_scaling * lora_update
             if self._preserve_global_mean and self._has_global_mean:

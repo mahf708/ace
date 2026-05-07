@@ -410,6 +410,119 @@ def cache_step_output(output_data: TensorDict, checkpoint_path: pathlib.Path):
         )
 
 
+@pytest.mark.parallel
+def test_legacy_global_pos_embed_checkpoint_loads_sliced():
+    """Legacy checkpoints saved before Stage C contain a global-shape
+    ``pos_embed`` tensor of size ``(1, C, H, W)``. The load-state-dict
+    pre-hook should detect that, slice it to the local extent, and emit
+    a DeprecationWarning. Lock that in here.
+    """
+    import warnings as _warnings
+
+    from fme.ace.registry.stochastic_sfno import NoiseConditionedModel
+    from fme.core.models.conditional_sfno.sfnonet import Context
+
+    img_shape = (8, 16)
+    embed_dim_pos = 4
+
+    class _IdentityConditional(torch.nn.Module):
+        def forward(self, x: torch.Tensor, context: Context) -> torch.Tensor:
+            return x
+
+    model = NoiseConditionedModel(
+        conditional_model=_IdentityConditional(),
+        img_shape=img_shape,
+        embed_dim_noise=2,
+        embed_dim_pos=embed_dim_pos,
+        embed_dim_labels=0,
+        inverse_sht=None,
+        lmax=0,
+        mmax=0,
+    ).to(fme.get_device())
+
+    # Construct a "legacy" state dict with full-shape pos_embed.
+    legacy_state = dict(model.state_dict())
+    legacy_state["pos_embed"] = torch.randn(
+        1, embed_dim_pos, *img_shape, device=fme.get_device()
+    )
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        # Loading should succeed (slicing applied via pre-hook) and emit
+        # exactly one DeprecationWarning naming pos_embed.
+        model.load_state_dict(legacy_state, strict=True)
+    deprecation_msgs = [
+        str(w.message)
+        for w in caught
+        if issubclass(w.category, DeprecationWarning) and "pos_embed" in str(w.message)
+    ]
+    assert deprecation_msgs, (
+        f"Expected DeprecationWarning naming 'pos_embed', got "
+        f"{[str(w.message) for w in caught]}"
+    )
+
+    dist = Distributed.get_instance()
+    h_slice, w_slice = dist.get_local_slices(img_shape)
+    expected = legacy_state["pos_embed"][..., h_slice, w_slice]
+    torch.testing.assert_close(model.pos_embed, expected)
+
+
+@pytest.mark.parallel
+def test_gaussian_noise_consistent_across_spatial_ranks():
+    """Under spatial parallelism, the noise drawn for the same logical
+    sample must be identical across spatial co-ranks (so each rank's local
+    slice matches what a single-rank run would produce). Stage B fix
+    routes the gaussian noise draw through ``Distributed.broadcast_spatial``;
+    this test locks that in.
+    """
+    from fme.ace.registry.stochastic_sfno import NoiseConditionedModel
+    from fme.core.models.conditional_sfno.sfnonet import Context
+
+    torch.manual_seed(0)
+    img_shape = (8, 16)
+    embed_dim = 4
+    n_samples = 2
+
+    class _IdentityConditional(torch.nn.Module):
+        def forward(self, x: torch.Tensor, context: Context) -> torch.Tensor:  # noqa: D401
+            # Echo the noise back as the "output" so we can inspect it.
+            return context.noise
+
+    dist = Distributed.get_instance()
+    model = NoiseConditionedModel(
+        conditional_model=_IdentityConditional(),
+        img_shape=img_shape,
+        embed_dim_noise=embed_dim,
+        embed_dim_pos=0,
+        embed_dim_labels=0,
+        inverse_sht=None,
+        lmax=0,
+        mmax=0,
+    ).to(fme.get_device())
+
+    x = torch.randn(n_samples, 1, *img_shape, device=fme.get_device())
+    # Scatter the input so model sees local-shape data.
+    x_local = x[(..., *dist.get_local_slices(img_shape))].contiguous()
+
+    # Two independent forward calls must each broadcast deterministically
+    # within the call (same noise on every spatial rank for the same sample).
+    torch.manual_seed(123)
+    noise1 = model(x_local).detach()
+    noise1_global = dist.gather_spatial({"noise": noise1}, img_shape)["noise"]
+
+    if dist.is_root():
+        # The gathered noise should agree with a single-rank reference
+        # produced by the same seed.
+        torch.manual_seed(123)
+        noise_ref = torch.randn(
+            n_samples, embed_dim, *img_shape, device=fme.get_device()
+        )
+        # Per-spatial-rank slices were assembled into ``noise1_global``;
+        # each rank produced an identical full-shape draw and sliced to
+        # local. The assembled tensor should match the reference.
+        torch.testing.assert_close(noise1_global, noise_ref)
+
+
 @pytest.mark.parametrize(
     "case_name,get_config",
     SELECTOR_GETTERS.items(),

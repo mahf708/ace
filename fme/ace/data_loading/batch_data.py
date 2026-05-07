@@ -47,6 +47,23 @@ class PrognosticState:
     def as_batch_data(self) -> "BatchData":
         return self._data
 
+    def scatter_spatial(self, global_img_shape: tuple[int, int]) -> "PrognosticState":
+        """Slice the underlying data to the local spatial chunk for this rank."""
+        return PrognosticState(self._data.scatter_spatial(global_img_shape))
+
+    def gather_spatial_to_root(
+        self, global_img_shape: tuple[int, int]
+    ) -> "PrognosticState | None":
+        """Gather the underlying data to spatial-rank 0.
+
+        Returns ``None`` on non-root spatial ranks. See
+        :meth:`BatchData.gather_spatial_to_root`.
+        """
+        gathered = self._data.gather_spatial_to_root(global_img_shape)
+        if gathered is None:
+            return None
+        return PrognosticState(gathered)
+
 
 @dataclasses.dataclass
 class BatchData:
@@ -177,6 +194,35 @@ class BatchData:
         dist = Distributed.get_instance()
         return self.__class__(
             data=dist.scatter_spatial(dict(self.data), global_img_shape),
+            time=self.time,
+            horizontal_dims=self.horizontal_dims,
+            epoch=self.epoch,
+            labels=self.labels,
+            n_ensemble=self.n_ensemble,
+        )
+
+    def gather_spatial_to_root(
+        self, global_img_shape: tuple[int, int]
+    ) -> "BatchData | None":
+        """Gather spatially-sharded data tensors onto rank 0 of the spatial group.
+
+        Returns ``None`` on non-root spatial ranks (callers — writers,
+        per-pixel aggregators — should check for ``None`` and skip work).
+        Identity (returns ``self``) when no spatial parallelism is active.
+        """
+        dist = Distributed.get_instance()
+        gathered: dict[str, torch.Tensor] = {}
+        is_root_of_spatial = True
+        for k, v in self.data.items():
+            g = dist.gather_spatial_to_root(v, global_img_shape)
+            if g is None:
+                is_root_of_spatial = False
+                break
+            gathered[k] = g
+        if not is_root_of_spatial:
+            return None
+        return self.__class__(
+            data=gathered,
             time=self.time,
             horizontal_dims=self.horizontal_dims,
             epoch=self.epoch,
@@ -542,6 +588,35 @@ class PairedData:
             TensorDict(self.prediction), n_ensemble=n_ensemble
         )
         return (unfolded_reference, unfolded_prediction)
+
+    def gather_spatial_to_root(
+        self, global_img_shape: tuple[int, int]
+    ) -> "PairedData | None":
+        """Gather prediction and reference tensors onto rank 0 of the spatial group.
+
+        Returns ``None`` on non-root spatial ranks. Identity (returns ``self``)
+        when no spatial parallelism is active.
+        """
+        dist = Distributed.get_instance()
+        prediction: dict[str, torch.Tensor] = {}
+        reference: dict[str, torch.Tensor] = {}
+        for k, v in self.prediction.items():
+            g = dist.gather_spatial_to_root(v, global_img_shape)
+            if g is None:
+                return None
+            prediction[k] = g
+        for k, v in self.reference.items():
+            g = dist.gather_spatial_to_root(v, global_img_shape)
+            if g is None:
+                return None
+            reference[k] = g
+        return PairedData(
+            prediction=prediction,
+            reference=reference,
+            time=self.time,
+            labels=self.labels,
+            n_ensemble=self.n_ensemble,
+        )
 
     @classmethod
     def from_batch_data(

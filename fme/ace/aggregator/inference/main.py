@@ -242,6 +242,7 @@ class InferenceEvaluatorAggregatorConfig:
                     n_timesteps=n_timesteps,
                     enable_extended_videos=self.log_extended_video,
                     variable_metadata=dataset_info.variable_metadata,
+                    global_img_shape=dataset_info.img_shape,
                 )
         aggregators["time_mean"] = TimeMeanEvaluatorAggregator(
             ops,
@@ -262,6 +263,7 @@ class InferenceEvaluatorAggregatorConfig:
             aggregators["seasonal"] = SeasonalAggregator(
                 ops=ops,
                 variable_metadata=dataset_info.variable_metadata,
+                global_img_shape=dataset_info.img_shape,
             )
         if n_timesteps * timestep > APPROXIMATELY_TWO_YEARS:
             aggregators["annual"] = PairedGlobalMeanAnnualAggregator(
@@ -298,6 +300,7 @@ class InferenceEvaluatorAggregatorConfig:
                 timestep,
                 gridded_operations=ops,
                 variable_metadata=dataset_info.variable_metadata,
+                global_img_shape=dataset_info.img_shape,
             )
 
         return InferenceEvaluatorAggregator(

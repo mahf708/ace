@@ -1,5 +1,6 @@
 import dataclasses
 import math
+import warnings
 from collections.abc import Callable
 from typing import Literal
 
@@ -16,6 +17,55 @@ from fme.core.models.conditional_sfno.sfnonet import (
 )
 
 
+def _make_local_pos_embed_load_hook(
+    param_name: str,
+    img_shape: tuple[int, int],
+    extra_leading_dims: int = 1,
+) -> Callable:
+    """Build a state-dict pre-hook that slices a legacy global-shape
+    parameter to the local spatial extent expected by this rank.
+
+    ``extra_leading_dims`` is the number of dims before the spatial (H, W) on
+    the parameter (e.g. 1 for a (1, C, H, W) pos_embed, 2 for a
+    (L, C, H, W) label_pos_embed).
+    """
+
+    def _hook(
+        module: torch.nn.Module,
+        state_dict: dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: dict,
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        key = prefix + param_name
+        if key not in state_dict:
+            return
+        tensor = state_dict[key]
+        # Already local (saved by a sharded checkpoint at the same topology
+        # or non-spatial single-rank): leave it alone.
+        if tensor.shape[-2:] == tuple(getattr(module, param_name).shape[-2:]):
+            return
+        # Legacy global-shape: slice to local extent.
+        if tensor.shape[-2:] != img_shape:
+            # Shape unrecognized; let the standard load_state_dict error
+            # path complain.
+            return
+        h_slice, w_slice = Distributed.get_instance().get_local_slices(img_shape)
+        state_dict[key] = tensor[(..., h_slice, w_slice)].contiguous()
+        warnings.warn(
+            f"Loaded legacy global-shape '{key}' (shape {tuple(tensor.shape)}) "
+            "and sliced it to the local spatial extent. Re-save the "
+            "checkpoint to suppress this warning.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    return _hook
+
+
 def isotropic_noise(
     leading_shape: tuple[int, ...],
     lmax: int,  # length of the ℓ axis expected by isht (global)
@@ -23,10 +73,17 @@ def isotropic_noise(
     isht: Callable[[torch.Tensor], torch.Tensor],
     device: torch.device,
 ) -> torch.Tensor:
+    dist = Distributed.get_instance()
+
     # --- draw independent N(0,1) parts --------------------------------------
+    # Draw at full spectral extent on every rank; broadcast from spatial-rank
+    # 0 so all spatial co-ranks see identical coefficients (otherwise the
+    # same logical sample would see independent noise on each spatial rank).
     coeff_shape = (*leading_shape, lmax, mmax)
     real = torch.randn(coeff_shape, dtype=torch.float32, device=device)
     imag = torch.randn(coeff_shape, dtype=torch.float32, device=device)
+    real = dist.broadcast_spatial(real)
+    imag = dist.broadcast_spatial(imag)
     imag[..., :, 0] = 0.0  # m = 0 ⇒ purely real
 
     # m > 0: make Re and Im each N(0,½)  → |a_{ℓ m}|² has variance 1
@@ -39,7 +96,7 @@ def isotropic_noise(
     alm = (real + 1j * imag) * scale
 
     # --- for distributed iSHT, slice to local spectral extent --------------
-    l_slice, m_slice = Distributed.get_instance().get_local_slices((lmax, mmax))
+    l_slice, m_slice = dist.get_local_slices((lmax, mmax))
     alm = alm[..., l_slice, m_slice]
 
     return isht(alm)
@@ -83,26 +140,36 @@ class NoiseConditionedModel(torch.nn.Module):
         self._lmax = lmax
         self._mmax = mmax
         self.label_pos_embed: torch.nn.Parameter | None = None
+        # Compute local spatial extent so pos_embed parameters are sized to
+        # what this rank actually uses (rather than full global + slice).
+        h_slice, w_slice = Distributed.get_instance().get_local_slices(img_shape)
         # register pos embed if pos_embed_dim != 0
         if embed_dim_pos != 0:
+            # Draw the global parameter and slice it to local so that the
+            # final per-rank values match what a single-rank run would
+            # produce at the same modes (preserves cross-topology
+            # equivalence).
+            global_pos = torch.zeros(1, embed_dim_pos, *img_shape)
+            torch.nn.init.trunc_normal_(global_pos, std=0.02)
             self.pos_embed = torch.nn.Parameter(
-                torch.zeros(
-                    1, embed_dim_pos, img_shape[0], img_shape[1], requires_grad=True
-                )
+                global_pos[..., h_slice, w_slice].clone().contiguous()
             )
-            # initialize pos embed with std=0.02
-            torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
+            self.pos_embed._spatially_sharded = True  # type: ignore[attr-defined]
+            self._register_load_state_dict_pre_hook(
+                _make_local_pos_embed_load_hook("pos_embed", img_shape)
+            )
             if embed_dim_labels > 0:
-                self.label_pos_embed = torch.nn.Parameter(
-                    torch.zeros(
-                        embed_dim_labels,
-                        embed_dim_pos,
-                        img_shape[0],
-                        img_shape[1],
-                        requires_grad=True,
-                    )
+                global_label_pos = torch.zeros(
+                    embed_dim_labels, embed_dim_pos, *img_shape
                 )
-                torch.nn.init.trunc_normal_(self.label_pos_embed, std=0.02)
+                torch.nn.init.trunc_normal_(global_label_pos, std=0.02)
+                self.label_pos_embed = torch.nn.Parameter(
+                    global_label_pos[..., h_slice, w_slice].clone().contiguous()
+                )
+                self.label_pos_embed._spatially_sharded = True  # type: ignore[attr-defined]
+                self._register_load_state_dict_pre_hook(
+                    _make_local_pos_embed_load_hook("label_pos_embed", img_shape)
+                )
         else:
             self.pos_embed = None
 
@@ -110,6 +177,7 @@ class NoiseConditionedModel(torch.nn.Module):
         self, x: torch.Tensor, labels: torch.Tensor | None = None
     ) -> torch.Tensor:
         x = x.reshape(-1, *x.shape[-3:])
+        dist = Distributed.get_instance()
         if self._inverse_sht is not None:
             noise = isotropic_noise(
                 (x.shape[0], self.embed_dim),
@@ -119,21 +187,25 @@ class NoiseConditionedModel(torch.nn.Module):
                 device=x.device,
             )
         else:
+            # Draw at full global spatial extent and broadcast from spatial-
+            # rank 0; otherwise spatial co-ranks would see independent noise
+            # for the same logical sample. Sliced to local extent below.
             noise = torch.randn(
-                [x.shape[0], self.embed_dim, *x.shape[-2:]],
+                [x.shape[0], self.embed_dim, *self.img_shape],
                 device=x.device,
                 dtype=x.dtype,
             )
+            noise = dist.broadcast_spatial(noise)
 
-        h_slice, w_slice = Distributed.get_instance().get_local_slices(self.img_shape)
+        if self._inverse_sht is None:
+            h_slice, w_slice = dist.get_local_slices(self.img_shape)
+            noise = noise[..., h_slice, w_slice].contiguous()
 
         if self.pos_embed is not None:
-            pos_local = self.pos_embed[..., h_slice, w_slice]
-            embedding_pos = pos_local.repeat(noise.shape[0], 1, 1, 1)
+            embedding_pos = self.pos_embed.repeat(noise.shape[0], 1, 1, 1)
             if self.label_pos_embed is not None and labels is not None:
-                label_local = self.label_pos_embed[..., h_slice, w_slice]
                 label_embedding_pos = torch.einsum(
-                    "bl, lpxy -> bpxy", labels, label_local
+                    "bl, lpxy -> bpxy", labels, self.label_pos_embed
                 )
                 embedding_pos = embedding_pos + label_embedding_pos
         else:

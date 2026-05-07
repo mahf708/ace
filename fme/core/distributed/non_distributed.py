@@ -121,6 +121,14 @@ class NonDistributed(DistributedBackend):
     def spatial_reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
         return tensor
 
+    def broadcast_spatial(self, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor
+
+    def gather_spatial_to_root(
+        self, tensor: torch.Tensor, global_img_shape: tuple[int, int]
+    ) -> torch.Tensor | None:
+        return tensor
+
     def weighted_mean(
         self,
         data: torch.Tensor,
