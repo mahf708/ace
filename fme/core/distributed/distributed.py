@@ -236,6 +236,7 @@ class Distributed:
         self,
         tensor_shape,
         data_parallel_dim: int | None = None,
+        validate_spatial: bool = True,
     ):
         """
         Gets the slice corresponding to the current rank within a global tensor_shape.
@@ -245,6 +246,10 @@ class Distributed:
                 a data parallel (batch) dimension. Assume last dims are (H, W).
             data_parallel_dim: the index of the data parallel dimension, if it exists.
                 by default, assumes the tensor does not have a data parallel dimension.
+            validate_spatial: if True (default), raise ValueError when the last two
+                dimensions are not evenly divisible by the spatial decomposition sizes.
+                Pass False when slicing non-spatial arrays (e.g. spectral coefficient
+                arrays) where uneven splits are acceptable.
         """
         if data_parallel_dim is not None and (
             tensor_shape[data_parallel_dim] % self.total_data_parallel_ranks != 0
@@ -255,7 +260,9 @@ class Distributed:
                 f"{self.total_data_parallel_ranks} data parallel ranks"
             )
         return self._distributed.get_local_slices(
-            tensor_shape, data_parallel_dim=data_parallel_dim
+            tensor_shape,
+            data_parallel_dim=data_parallel_dim,
+            validate_spatial=validate_spatial,
         )
 
     def reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
