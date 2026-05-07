@@ -1,9 +1,51 @@
 # 01 — Replace rank-0 checkpointing with DCP
 
-**Status**: NOT STARTED
+**Status**: IN PROGRESS — helper module landed; trainer integration deferred to 01a
 **Depends on**: —
 **Blocks**: 03 (FSDP2 backend cannot save/load full state dicts cleanly without this)
 **Estimated size**: M (1-3 days)
+
+## Landed in this iteration
+
+- `fme/core/generics/_checkpointing.py` — DCP save/load helpers with
+  collective and non-collective modes, atomic writes, legacy-file detection,
+  and a deprecation-warning legacy reader.
+- `fme/core/generics/test_checkpointing.py` — round-trip, atomicity,
+  partial-load, and rank-handling unit tests.
+
+The trainer continues to write legacy single-file checkpoints. `_restore_checkpoint`
+also continues to use the legacy path. The DCP helpers are ready for use
+but not yet wired into the trainer.
+
+## Why the trainer wiring was deferred
+
+DCP's `dcp.load(template, ...)` requires the template to have all keys
+present, including per-parameter optimizer-state entries
+(``state[i]["exp_avg"]`` etc.). A freshly-built optimizer has an empty
+``state`` dict, so a naive DCP load into the fresh template loses the
+saved optimizer state.
+
+The correct pattern uses PyTorch's
+``torch.distributed.checkpoint.state_dict.set_state_dict`` /
+``set_optimizer_state_dict`` helpers, which know how to apply a loaded
+optimizer state dict to a fresh optimizer (mirroring
+``Optimizer.load_state_dict`` semantics). That refactor naturally lands
+alongside FSDP (task 03) since FSDP-sharded optimizer state requires
+those same helpers anyway.
+
+A separate **task 01a** (sub-task) tracks the trainer wiring:
+
+1. Use ``get_state_dict`` / ``set_state_dict`` from
+   ``torch.distributed.checkpoint.state_dict`` for model + optimizer.
+2. Add a ``save_dcp_checkpoint: bool = False`` flag to ``TrainConfig``
+   (default off until inference loaders are also updated).
+3. Update ``load_stepper`` and ``load_stepper_config`` in
+   ``fme/ace/stepper/single_module.py`` (and downscaling counterparts)
+   to auto-detect DCP directories and load via the same helpers.
+4. Switch the default to DCP once inference loaders work.
+
+The remainder of this file describes the end-state of task 01 (helper
+module + trainer integration + inference loader updates).
 
 ## Goal
 
