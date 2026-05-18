@@ -32,6 +32,11 @@ class NormalizationConfig:
         fill_nans_on_denormalize: Whether to fill NaNs during denormalization. If
             true, on denormalization NaNs in the normalized input become global means in
             the denormalized output.
+        compute_online: If true, defer providing stats: paths and explicit
+            means/stds may both be omitted, and the training harness is
+            expected to populate ``means`` and ``stds`` via ``apply_stats``
+            from a single pre-pass over the training loader before the
+            stepper is built.
     """
 
     global_means_path: str | pathlib.Path | None = None
@@ -40,6 +45,7 @@ class NormalizationConfig:
     stds: Mapping[str, float] = dataclasses.field(default_factory=dict)
     fill_nans_on_normalize: bool = False
     fill_nans_on_denormalize: bool = False
+    compute_online: bool = False
 
     def __post_init__(self):
         using_path = (
@@ -51,11 +57,28 @@ class NormalizationConfig:
                 "Cannot use both global_means_path and global_stds_path "
                 "and explicit means and stds."
             )
-        if not (using_path or using_explicit):
+        if self.compute_online and (using_path or using_explicit):
             raise ValueError(
-                "Must use either global_means_path and global_stds_path "
-                "or explicit means and stds."
+                "compute_online cannot be combined with global_means_path / "
+                "global_stds_path or explicit means/stds."
             )
+        if not (using_path or using_explicit or self.compute_online):
+            raise ValueError(
+                "Must use either global_means_path and global_stds_path, "
+                "explicit means and stds, or compute_online=True."
+            )
+
+    def apply_stats(
+        self, means: Mapping[str, float], stds: Mapping[str, float]
+    ) -> None:
+        """Populate this config with stats computed at runtime.
+
+        Intended to be called from the training harness after a single
+        pass over the training loader when ``compute_online`` is true.
+        """
+        self.means = dict(means)
+        self.stds = dict(stds)
+        self.compute_online = False
 
     def load(self):
         """
@@ -63,6 +86,10 @@ class NormalizationConfig:
 
         Updates the configuration so it no longer requires external files.
         """
+        if self.compute_online:
+            # Stats are populated later by the training harness via
+            # apply_stats(); nothing to load from disk here.
+            return
         if self.global_means_path is not None and self.global_stds_path is not None:
             # convert to explicit means and stds so if the object is stored
             # and reloaded, we no longer need the netCDF files
@@ -335,3 +362,8 @@ class NetworkAndLossNormalizationConfig:
             self.loss.load()
         if self.residual is not None:
             self.residual.load()
+
+    def online_configs(self) -> list[NormalizationConfig]:
+        """Return any contained configs that still need online stats."""
+        configs = [self.network, self.loss, self.residual]
+        return [c for c in configs if c is not None and c.compute_online]

@@ -85,7 +85,43 @@ from fme.core.generics.trainer import (
     inference_one_epoch,
 )
 from fme.core.generics.validation import run_validation
+from fme.core.normalizer import NormalizationConfig
+from fme.core.online_stats import compute_normalization_stats
 from fme.core.typing_ import TensorDict, TensorMapping
+
+
+def _find_online_normalization_configs(root: Any) -> list[NormalizationConfig]:
+    """Walk an object graph and return NormalizationConfig instances that
+    are still waiting on online stats.
+    """
+    found: list[NormalizationConfig] = []
+    seen: set[int] = set()
+
+    def visit(obj: Any) -> None:
+        if obj is None:
+            return
+        oid = id(obj)
+        if oid in seen:
+            return
+        seen.add(oid)
+        if isinstance(obj, NormalizationConfig):
+            if obj.compute_online:
+                found.append(obj)
+            return
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            for f in dataclasses.fields(obj):
+                visit(getattr(obj, f.name, None))
+        if hasattr(obj, "_step_config_instance"):
+            visit(obj._step_config_instance)
+        if isinstance(obj, dict):
+            for v in obj.values():
+                visit(v)
+        elif isinstance(obj, (list, tuple, set)):
+            for v in obj:
+                visit(v)
+
+    visit(root)
+    return found
 
 
 def build_trainer(builder: TrainBuilders, config: TrainConfig) -> "Trainer":
@@ -106,6 +142,19 @@ def build_trainer(builder: TrainBuilders, config: TrainConfig) -> "Trainer":
         data.log_info(name)
 
     dataset_info = train_data.dataset_info
+
+    online_configs = _find_online_normalization_configs(config.stepper_config)
+    if online_configs:
+        logging.info(
+            "Computing online normalization stats over training data "
+            "(%d config(s) flagged)",
+            len(online_configs),
+        )
+        means, stds = compute_normalization_stats(train_data.loader)
+        for cfg in online_configs:
+            cfg.apply_stats(means=means, stds=stds)
+        logging.info("Online normalization stats ready for %d variables", len(means))
+
     logging.info("Starting model initialization")
     stepper = builder.get_stepper(
         dataset_info=dataset_info,

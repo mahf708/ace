@@ -78,6 +78,48 @@ def test_missing_normalization_build_raises_error():
         normalization.build(all_names)
 
 
+def test_compute_online_allows_empty_stats_at_construction():
+    config = NormalizationConfig(compute_online=True)
+    assert config.compute_online
+    assert config.means == {}
+    assert config.stds == {}
+    # load() must be a no-op while still waiting on stats
+    config.load()
+    assert config.compute_online
+
+
+def test_compute_online_with_explicit_stats_raises():
+    with pytest.raises(ValueError, match="compute_online cannot be combined"):
+        NormalizationConfig(
+            compute_online=True,
+            means={"a": 0.0},
+            stds={"a": 1.0},
+        )
+
+
+def test_apply_stats_populates_and_clears_flag():
+    config = NormalizationConfig(compute_online=True)
+    config.apply_stats(means={"a": 1.0, "b": 2.0}, stds={"a": 0.5, "b": 4.0})
+    assert not config.compute_online
+    assert dict(config.means) == {"a": 1.0, "b": 2.0}
+    assert dict(config.stds) == {"a": 0.5, "b": 4.0}
+    normalizer = config.build(["a", "b"])
+    assert pytest.approx(float(normalizer.means["a"].item())) == 1.0
+    assert pytest.approx(float(normalizer.stds["b"].item())) == 4.0
+
+
+def test_network_and_loss_online_configs_discovery():
+    network = NormalizationConfig(compute_online=True)
+    residual = NormalizationConfig(compute_online=True)
+    combined = NetworkAndLossNormalizationConfig(network=network, residual=residual)
+    pending = combined.online_configs()
+    assert len(pending) == 2
+    assert network in pending and residual in pending
+    network.apply_stats(means={"a": 0.0}, stds={"a": 1.0})
+    residual.apply_stats(means={"a": 0.0}, stds={"a": 1.0})
+    assert combined.online_configs() == []
+
+
 def test_tensors_with_missing_normalization_stats_get_filtered():
     normalization = NormalizationConfig(
         means={"a": 1.0, "b": 2.0},
@@ -127,13 +169,13 @@ def test_normalization_with_nans(fill_nans_on_normalize, fill_nans_on_denormaliz
     denormalized = normalization.denormalize(normalized_input)
     if fill_nans_on_denormalize:
         assert not torch.isnan(denormalized["a"][1]), "denormalized_nans_removed_a"
-        assert denormalized["a"][1] == torch.tensor(
-            means["a"]
-        ), "denormalized_nans_filled_means_a"
+        assert denormalized["a"][1] == torch.tensor(means["a"]), (
+            "denormalized_nans_filled_means_a"
+        )
         assert not torch.isnan(denormalized["b"][1]), "denormalized_nans_removed_b"
-        assert denormalized["b"][1] == torch.tensor(
-            means["b"]
-        ), "denormalized_nans_filled_means_b"
+        assert denormalized["b"][1] == torch.tensor(means["b"]), (
+            "denormalized_nans_filled_means_b"
+        )
     else:
         assert torch.isnan(denormalized["a"][1]), "denormalized_nans_not_removed_a"
         assert torch.isnan(denormalized["b"][1]), "denormalized_nans_not_removed_b"
