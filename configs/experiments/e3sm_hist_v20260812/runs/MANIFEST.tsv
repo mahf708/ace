@@ -34,3 +34,16 @@ P4	E05.aug26.atm.A3_B08_C1_L0_O5_W0_X0.S01	atm	2	8	8	S01	+ aerosol input back: b
 P4	E05.aug26.atm.A3_B32_C1_L0_O5_W0_X0.S01	atm	8	32	32	S01	+ aerosol input back: both inputs and outputs @ batch 32
 P4	E11.aug26.ocn.A0_B08_C0_L0_O5_W0_X0.S01	ocn	1	4	8	S01	baseline @ batch 8
 P4	E11.aug26.ocn.A0_B32_C0_L0_O5_W0_X0.S01	ocn	4	16	32	S01	baseline @ batch 32
+P5	E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01	atm	4	16	16	S01	deterministic control: MSE, no noise, 1 member
+P6	E19.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I0_M2_RS04_Z32.S01	atm	4	16	16	S01	stochastic + sampled rollout, max 4 steps
+P6	E22.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF2_Z00.S01	atm	4	16	16	S01	deterministic + fixed 2-step rollout (the deck's ACE2 baseline)
+P6	E23.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RS04_Z00.S01	atm	4	16	16	S01	deterministic + sampled rollout, max 4 steps
+P6	E25.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I0_M1_RF1_Z32.S01	atm	4	16	16	S01	1 ensemble member: CRPS degenerates to MAE
+P6	E26.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I0_M3_RF1_Z32.S01	atm	4	16	16	S01	3 ensemble members
+P6	E27.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I0_M2_RF1_Z64.S01	atm	4	16	16	S01	noise_embed_dim 64 (vs E01's 32)
+P7	E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S02	atm	4	16	16	S02	deterministic control: MSE, no noise, 1 member
+P7	E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S03	atm	4	16	16	S03	deterministic control: MSE, no noise, 1 member
+P7	E28.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I1_M2_RF1_Z32.S01	atm	4	16	16	S01	curriculum: E21's deterministic weights, then stochastic training
+P8	E18.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I0_M2_RF2_Z32.S01	atm	4	16	16	S01	stochastic + fixed 2-step rollout, both steps scored
+P8	E20.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D0_I0_M2_RS20_Z32.S01	atm	4	16	16	S01	stochastic + the deck's sampled rollout, max 20 steps
+P8	E24.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RS20_Z00.S01	atm	4	16	16	S01	deterministic + the deck's sampled rollout, max 20 steps

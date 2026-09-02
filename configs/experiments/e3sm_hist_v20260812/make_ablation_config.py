@@ -42,6 +42,30 @@ The tuning set is a fixed-order factor word, `A?_B??_C?_O?_W?_X?`:
     W4 zero a trend-dominated near-zero channel
     X0 baseline              X1 AMP (bf16 autocast)
 
+Added 2026-09-02: a second, OPTIONAL word
+-----------------------------------------
+The stochastic-vs-deterministic block (E18-E28) varies the training objective
+rather than the data, so it gets its own word, appended as a separate dotted
+field and emitted ONLY when it is not the baseline:
+
+    E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01                       <- unchanged
+    E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01
+
+    D0 EnsembleLoss (crps 0.9 / energy 0.1)   D1 MSE
+    I0 from scratch                           I1 warm start from the D1 arm
+    M1/M2/M3 ensemble members per batch element (`n_ensemble`)
+    RF1 one step, last-step-only              RF2 two steps, both optimized
+    RS04 sampled {1:.6, 2:.2, 4:.2}
+    RS20 sampled {1:.6, 2:.2, 4:.1, 12:.05, 20:.05}
+    Z00 no noise conditioning                 Z32 / Z64 noise_embed_dim
+
+Why a second word and not seven more positions in the first one: the aug26
+campaign is already running. Its 35 run ids are wandb run names, scratch
+directory names and figure labels, and widening the word would rename every one
+of them mid-flight. The baseline of the new word is exactly E01, so E01 keeps
+its id, is the control for the whole block, and needs no rerun -- which is also
+what makes the block affordable.
+
 Sizing
 ------
 `batch_size` is global and is split across ranks by `dist.local_batch_size`.
@@ -308,8 +332,102 @@ INFERENCE_EVALUATIONS = 10
 OCEAN_FORWARD_STEPS_IN_MEMORY = 10
 
 
+# ------------------------------------------- the training-objective factors --
+
+# Added 2026-09-02 for the stochastic-vs-deterministic block (E18-E28),
+# transcribed from `E3SM_Stochastic_vs_Deterministic_Ideas.pptx` and rebased
+# onto E01 rather than onto the deck's own baseline.
+#
+# The deck's eight experiments vary four things -- loss, noise dimension,
+# ensemble size and training rollout -- around a baseline of its own
+# (CRPS / noise 64 / 2 members / multistep). E01 is CRPS / noise 32 / 2 members
+# / ONE step, so the deck's baseline is two factors away from ours. Anchoring on
+# E01 instead buys three things: the control already exists with three seeds,
+# the deck's "reduce noise dim to 32" becomes "raise it to 64" against a control
+# that is already run, and every arm below is one factor from something with an
+# error bar on it, which is what the campaign's single-seed rule requires.
+#
+# `R` is the rollout, and its levels are named for their shape and their
+# maximum: RF<n> is a fixed n-step rollout, RS<nn> a sampled one whose largest
+# outcome is nn. The optimize_last_step_only flag travels with the level rather
+# than being a factor of its own, because the deck ties them: its fixed-2-step
+# arms score both steps (the standard ACE2 recipe) and its sampled arms score
+# only the last. That makes RF2 a two-factor move against RF1 -- more steps AND
+# more scored steps -- and it is called out in EXPERIMENTS.md rather than
+# silently rolled into "rollout".
+#
+# COST. `optimize_last_step_only` runs every step but the scored one under
+# torch.no_grad (single_module.py `_accumulate_loss`), so an n-step sample costs
+# (n-1) forward passes plus one forward+backward, and a forward pass is about a
+# third of a training step. RF2 scores both steps, so it pays two full ones.
+# `n_ensemble` multiplies all of it. Relative to E01's step:
+#
+#     RF1  1.00     RF2  2.00     RS04  1.20     RS20  1.67
+#     M1   x0.50    M2   x1.00    M3    x1.50    (relative to M2)
+#
+# which is why the deterministic pole (M1) is roughly half the cost of the
+# stochastic one at the same rollout, and why comparing them at equal epochs is
+# not comparing them at equal compute. See EXPERIMENTS.md "What the
+# stochastic-deterministic comparison costs".
+ROLLOUTS: dict[str, tuple[object, bool]] = {
+    # level: (n_forward_steps value, optimize_last_step_only)
+    "F1": (1, True),
+    "F2": (2, False),
+    "S04": ({1: 0.6, 2: 0.2, 4: 0.2}, True),
+    "S20": ({1: 0.6, 2: 0.2, 4: 0.1, 12: 0.05, 20: 0.05}, True),
+}
+
+# The deck's deterministic configs set `noise_embed_dim: 0` while leaving
+# `noise_type: isotropic`, and that combination does not run: the wrapper still
+# draws a noise field before the layers decide to ignore it, so it calls the
+# inverse SHT on a zero-channel tensor and dies in the FFT
+# (`RuntimeError: MKL FFT error ... Inconsistent configuration parameters`,
+# reproduced 2026-09-02 on `NoiseConditionedSFNOBuilder`). Gaussian noise at
+# zero channels is a `randn` of zero size, which is free and harmless, so Z00
+# switches the type as well as the width.
+NOISE_TYPE_AT_ZERO = "gaussian"
+
+# Where a warm-started arm reads its initial weights from. Written into the
+# .env as a RUN ID, never as a path: runs/ must stay free of anyone's scratch
+# (check_campaign.py fails a generated file containing /pscratch/), and the
+# checkpoint's real location is $CAMPAIGN_ROOT/<runid>/..., which is only known
+# at submit time. run-train.sh resolves it and passes the dotlist override.
+WARM_START_CKPT = "training_checkpoints/best_ckpt.tar"
+WARM_START_PLACEHOLDER = "OVERRIDE_ME_WARM_START"
+
+
+@dataclasses.dataclass(frozen=True)
+class Training:
+    """The training-objective word, D_I_M_R_Z. Atmosphere only.
+
+    The defaults ARE E01, which is what lets the word be omitted from a run id
+    when nothing in it is varied -- so the 35 aug26 ids are untouched by this
+    file existing. `apply_training` asserts the baseline still matches these
+    defaults rather than trusting the comment.
+    """
+
+    objective: str = "0"  # D0 EnsembleLoss, D1 MSE
+    init: str = "0"  # I0 from scratch, I1 warm start
+    members: int = 2  # M, stepper_training.n_ensemble
+    rollout: str = "F1"  # R, a key of ROLLOUTS
+    noise: int = 32  # Z, builder noise_embed_dim
+
+    def word(self) -> str:
+        return (
+            f"D{self.objective}_I{self.init}_M{self.members}"
+            f"_R{self.rollout}_Z{self.noise:02d}"
+        )
+
+    @property
+    def is_default(self) -> bool:
+        return self == Training()
+
+
 LOCAL_BATCH = {"atm": 1, "ocn": 2}
 GPUS_PER_NODE = 4
+# The last aug26 priority. Everything above it is the stochastic-vs-deterministic
+# block, which submit-campaign.sh's default --max-priority 4 excludes.
+AUG26_MAX_PRIORITY = 4
 # Keyed by realm, and for the ocean by cadence: a 1-day epoch holds 5x the
 # samples of a 5-day one, so equal wall clock means a fifth of the epochs.
 DEFAULT_EPOCHS = {"atm": 30, "ocn": 150, "ocn-O1": 30}
@@ -340,6 +458,12 @@ class Experiment:
     realm: str
     factors: Factors
     note: str
+    # The training-objective word. Left at its default for everything in the
+    # aug26 list, which is what keeps those 35 run ids byte-identical.
+    training: Training = Training()
+    # Run id of the experiment this one warms up from, for `init="1"` arms.
+    # A run id, not a path -- see WARM_START_CKPT.
+    warm_start_from: str = ""
     seeds: tuple[int, ...] = (1,)
     # Extra single-seed runs at a different batch size, per "add exp with
     # Batch8 / Batch32" on the page.
@@ -399,6 +523,70 @@ RUNLIST: list[Experiment] = [
                "zero iceVolumeTotal, structurally zero over most of the domain"),
     Experiment("E17", "ocn", Factors(ocean_step="1"),
                "1-daily ocean stepping (O1) vs E11's 5-daily"),
+    # -- added 2026-09-02: stochastic vs deterministic ----------------------
+    #
+    # All eleven sit on E01's tuning set (A0_B16_C0_L0_O5_W0_X0) and vary only
+    # the training word, so E01 -- three seeds, already run -- is the control
+    # for every one of them and the block costs 13 runs rather than 14.
+    #
+    # The spine is a 2x4 factorial: two objectives (stochastic D0_M2_Z32,
+    # deterministic D1_M1_Z00) crossed with four training rollouts. E01 fills
+    # the (stochastic, RF1) cell, so seven of the eight cells are new:
+    #
+    #                 RF1        RF2        RS04       RS20
+    #   stochastic    E01        E18        E19        E20
+    #   deterministic E21        E22        E23        E24
+    #
+    # E22 and E24 are the deck's exp4 and exp5 as written; E18 is its exp3.
+    # Then three one-factor arms off E01 (E25 = exp2, E26 = exp6, E27 = exp7
+    # inverted) and the curriculum (E28 = exp8).
+    #
+    # PRIORITY 5 AND UP ON PURPOSE. submit-campaign.sh defaults to
+    # --max-priority 4, so nothing here can be launched by an aug26 submission
+    # by accident; it needs an explicit --max-priority 8. This block wants its
+    # own window -- the aug26 reservation is already at 83% and ends
+    # 2026-09-05.
+    Experiment("E21", "atm", Factors(),
+               "deterministic control: MSE, no noise, 1 member",
+               training=Training(objective="1", members=1, noise=0),
+               seeds=(1, 2, 3), priority=5),
+    Experiment("E18", "atm", Factors(),
+               "stochastic + fixed 2-step rollout, both steps scored",
+               training=Training(rollout="F2"), priority=8),
+    Experiment("E19", "atm", Factors(),
+               "stochastic + sampled rollout, max 4 steps",
+               training=Training(rollout="S04"), priority=6),
+    Experiment("E20", "atm", Factors(),
+               "stochastic + the deck's sampled rollout, max 20 steps",
+               training=Training(rollout="S20"), priority=8),
+    Experiment("E22", "atm", Factors(),
+               "deterministic + fixed 2-step rollout (the deck's ACE2 baseline)",
+               training=Training(objective="1", members=1, noise=0, rollout="F2"),
+               priority=6),
+    Experiment("E23", "atm", Factors(),
+               "deterministic + sampled rollout, max 4 steps",
+               training=Training(objective="1", members=1, noise=0, rollout="S04"),
+               priority=6),
+    Experiment("E24", "atm", Factors(),
+               "deterministic + the deck's sampled rollout, max 20 steps",
+               training=Training(objective="1", members=1, noise=0, rollout="S20"),
+               priority=8),
+    Experiment("E25", "atm", Factors(),
+               "1 ensemble member: CRPS degenerates to MAE",
+               training=Training(members=1), priority=6),
+    Experiment("E26", "atm", Factors(),
+               "3 ensemble members",
+               training=Training(members=3), priority=6),
+    Experiment("E27", "atm", Factors(),
+               "noise_embed_dim 64 (vs E01's 32)",
+               training=Training(noise=64), priority=6),
+    Experiment("E28", "atm", Factors(),
+               "curriculum: E21's deterministic weights, then stochastic training",
+               training=Training(init="1"),
+               warm_start_from=(
+                   "E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01"
+               ),
+               priority=7),
 ]
 
 
@@ -410,13 +598,22 @@ class Run:
     seed: int
     note: str
     priority: int
+    training: Training = Training()
+    warm_start_from: str = ""
 
     @property
     def runid(self) -> str:
-        return (
-            f"{self.exp}.{CAMPAIGN}.{self.realm}."
-            f"{self.factors.word()}.S{self.seed:02d}"
-        )
+        """`<exp>.<date>.<realm>.<tuning_set>[.<training_set>].S<seed>`.
+
+        The training word is omitted when it is the baseline, so every aug26 run
+        id is exactly what it was before the word existed. That is not cosmetic:
+        those ids are wandb run names and scratch directory names for a campaign
+        that is already running, and renaming one orphans its output.
+        """
+        word = self.factors.word()
+        if not self.training.is_default:
+            word = f"{word}.{self.training.word()}"
+        return f"{self.exp}.{CAMPAIGN}.{self.realm}.{word}.S{self.seed:02d}"
 
     @property
     def ranks(self) -> int:
@@ -453,7 +650,17 @@ def expand(runlist: list[Experiment]) -> list[Run]:
     runs: list[Run] = []
     for e in runlist:
         for seed in e.seeds:
-            runs.append(Run(e.exp, e.realm, e.factors, seed, e.note, e.priority))
+            runs.append(
+                Run(e.exp, e.realm, e.factors, seed, e.note, e.priority,
+                    e.training, e.warm_start_from)
+            )
+        sweeps = e.batch_variants or e.lr_scaled_batch_variants
+        if sweeps and not e.training.is_default:
+            raise SizingError(
+                f"{e.exp}: batch and lr sweeps are defined against the aug26 "
+                f"tuning set only; combining them with a non-default training "
+                f"word would confound an optimizer question with an objective one"
+            )
         for batch in e.batch_variants:
             runs.append(
                 Run(
@@ -483,6 +690,11 @@ def expand(runlist: list[Experiment]) -> list[Run]:
     for i, r in enumerate(runs):
         if r.seed != 1 and r.priority == 1:
             runs[i] = dataclasses.replace(r, priority=3)
+        # Same rule one ladder up: the stochastic block's control (E21) is P5,
+        # and its second and third seeds are worth less than the single-seed
+        # arms they exist to give an error bar to.
+        elif r.seed != 1 and r.priority == 5:
+            runs[i] = dataclasses.replace(r, priority=7)
     return runs
 
 
@@ -619,6 +831,104 @@ def _plot_lists(config: dict) -> list[list[str]]:
     return list(found.values())
 
 
+def apply_training(config: dict, run: Run) -> None:
+    """Apply the training-objective word: loss, ensemble size, rollout, noise.
+
+    The baseline of the word IS E01, so the default case is a no-op -- but it is
+    a CHECKED no-op. If the atmosphere baseline drifts away from `Training()`'s
+    defaults, every generated run id in the new block would quietly start
+    meaning something different from what it says, which is the one failure
+    this directory takes seriously. So the defaults are asserted against the
+    file rather than assumed.
+    """
+    training = run.training
+    if run.realm != "atm":
+        if not training.is_default:
+            raise SizingError(
+                f"{run.runid}: the training-objective word is atmosphere-only; "
+                f"Samudra has no noise conditioning and its loss is plain MSE"
+            )
+        return
+
+    st = config["stepper_training"]
+    builder = config["stepper"]["step"]["config"]["builder"]["config"]
+
+    if training.is_default:
+        # The assertion, not the application.
+        baseline = {
+            "n_ensemble": st.get("n_ensemble"),
+            "n_forward_steps": st.get("n_forward_steps"),
+            "optimize_last_step_only": st.get("optimize_last_step_only"),
+            "loss type": st.get("loss", {}).get("type"),
+            "noise_embed_dim": builder.get("noise_embed_dim"),
+        }
+        expected = {
+            "n_ensemble": Training().members,
+            "n_forward_steps": ROLLOUTS[Training().rollout][0],
+            "optimize_last_step_only": ROLLOUTS[Training().rollout][1],
+            "loss type": "EnsembleLoss",
+            "noise_embed_dim": Training().noise,
+        }
+        if baseline != expected:
+            raise SizingError(
+                "config-train-atm.yaml no longer matches Training()'s defaults, "
+                f"so an omitted training word would be a lie: {baseline} against "
+                f"{expected}. Update Training() and regenerate -- and note that "
+                "doing so renames every run in the E18-E28 block."
+            )
+        return
+
+    st["n_ensemble"] = training.members
+
+    steps, last_only = ROLLOUTS[training.rollout]
+    if isinstance(steps, int):
+        st["n_forward_steps"] = steps
+    else:
+        # TimeLengthProbabilities. dacite matches it by shape, and the
+        # probabilities are renormalized in __post_init__, so they do not have
+        # to sum to 1 -- but they do here, because a set that does not is
+        # unreadable in a diff.
+        total = sum(steps.values())
+        if abs(total - 1.0) > 1e-9:
+            raise SizingError(
+                f"R{training.rollout} probabilities sum to {total}, not 1.0"
+            )
+        st["n_forward_steps"] = {
+            "outcomes": [
+                {"steps": k, "probability": v} for k, v in sorted(steps.items())
+            ]
+        }
+    st["optimize_last_step_only"] = last_only
+
+    if training.objective == "1":
+        st["loss"]["type"] = "MSE"
+        # crps_weight and energy_score_weight are EnsembleLoss's; _MSELoss takes
+        # no arguments and LossConfig.build ignores kwargs for every other type,
+        # so leaving them would parse, run, and read as a lie in the file.
+        st["loss"].pop("kwargs", None)
+    elif training.objective != "0":
+        raise SizingError(f"unknown objective D{training.objective}")
+
+    if training.members != 2 and st["loss"]["type"] == "EnsembleLoss":
+        # Not an error -- it is E25 and E26's whole point -- but the degeneracy
+        # is worth stating where it is created. At one member the CRPS pairwise
+        # term is identically zero (fme/core/ensemble.py: `if n_ens == 1`), so
+        # the objective becomes 0.9 x MAE + 0.1 x spectral L1: still a
+        # deterministic loss, and a DIFFERENT one from D1's MSE.
+        pass
+
+    builder["noise_embed_dim"] = training.noise
+    if training.noise == 0:
+        builder["noise_type"] = NOISE_TYPE_AT_ZERO
+
+    if training.init == "1":
+        if not run.warm_start_from:
+            raise SizingError(f"{run.runid}: I1 but no warm_start_from run id")
+        st.setdefault("parameter_init", {})["weights_path"] = WARM_START_PLACEHOLDER
+    elif training.init != "0":
+        raise SizingError(f"unknown init set I{training.init}")
+
+
 def apply_sizing(config: dict, run: Run) -> None:
     """Set the batch sizes and make every count divide the rank count."""
     ranks = run.ranks
@@ -692,6 +1002,7 @@ def build(baseline: dict, run: Run, epochs: int, with_aod: bool) -> dict:
     config = copy.deepcopy(baseline)
     config["seed"] = run.seed
     apply_channels(config, run, with_aod)
+    apply_training(config, run)
     apply_sizing(config, run)
     apply_epoch_schedule(config, epochs)
     apply_inference_cost(config, run)
@@ -785,7 +1096,37 @@ def env_file(run: Run) -> str:
             f"S{run.seed:02d}",
             f"P{run.priority}",
         ]
+        # The training-objective factors are their own tags only when they are
+        # varied, so "every D1 run" is a filter and E01 does not acquire five
+        # tags it did not have yesterday.
+        + (
+            []
+            if run.training.is_default
+            else [
+                "stoch",
+                f"D{run.training.objective}",
+                f"I{run.training.init}",
+                f"M{run.training.members}",
+                f"R{run.training.rollout}",
+                f"Z{run.training.noise:02d}",
+            ]
+        )
     )
+    warm = (
+        [
+            # A run id, resolved to $CAMPAIGN_ROOT/<runid>/<ckpt> by
+            # run-train.sh. Never a path: runs/ has to be byte-identical for
+            # every teammate, and the checkpoint lives in whoever's scratch owns
+            # the parent run.
+            f"FME_WARM_START_FROM={run.warm_start_from}",
+            f"FME_WARM_START_CKPT={WARM_START_CKPT}",
+        ]
+        if run.training.init == "1"
+        else []
+    )
+    job_type = run.factors.word()
+    if not run.training.is_default:
+        job_type = f"{job_type}.{run.training.word()}"
     return "\n".join(
         [
             f"# generated by make_ablation_config.py -- {run.note}",
@@ -795,9 +1136,14 @@ def env_file(run: Run) -> str:
             f"FME_NODES={run.nodes}",
             f"FME_RANKS={run.ranks}",
             f"FME_PRIORITY={run.priority}",
+            *warm,
             f"WANDB_NAME={run.runid}",
             f"WANDB_RUN_GROUP={CAMPAIGN}.{run.realm}.{run.exp}",
-            f"WANDB_JOB_TYPE={run.factors.word()}",
+            # The job type is what a wandb workspace groups arms by, so it has
+            # to carry everything that is varied. Without the training word,
+            # every run in the E18-E28 block would share E01's job type and the
+            # grouping would show one arm where there are twelve.
+            f"WANDB_JOB_TYPE={job_type}",
             f"WANDB_TAGS={tags}",
             f'WANDB_NOTES="{run.note} | {run.nodes} nodes, {run.ranks} ranks"',
             "",
@@ -927,9 +1273,19 @@ def report(runs: list[Run]) -> None:
     for pri in sorted(by_priority):
         running += by_priority[pri]
         print(f"  P{pri}: {by_priority[pri]:>3} nodes  (cumulative {running})")
-    total = sum(r.nodes for r in runs)
-    print(f"  total: {total} nodes across {len(runs)} runs "
-          f"({'fits' if total <= 96 else 'EXCEEDS'} the 96-node reservation)")
+    # Two campaigns share this list. P1-P4 is aug26, sized against the 96-node
+    # reservation that ends 2026-09-05; P5-P8 is the stochastic block, which
+    # wants its own window and is excluded from submit-campaign.sh by default.
+    # Summing them would report a number no allocation was ever asked for.
+    aug = sum(r.nodes for r in runs if r.priority <= AUG26_MAX_PRIORITY)
+    stoch = sum(r.nodes for r in runs if r.priority > AUG26_MAX_PRIORITY)
+    n_aug = sum(1 for r in runs if r.priority <= AUG26_MAX_PRIORITY)
+    print(f"  aug26 (P1-P{AUG26_MAX_PRIORITY}): {aug} nodes across {n_aug} runs "
+          f"({'fits' if aug <= 96 else 'EXCEEDS'} the 96-node reservation)")
+    if stoch:
+        print(f"  stochastic block (P{AUG26_MAX_PRIORITY + 1}+): {stoch} nodes "
+              f"across {len(runs) - n_aug} runs -- needs its own window; "
+              f"submit-campaign.sh will not queue it without --max-priority 8")
 
 
 if __name__ == "__main__":

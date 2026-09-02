@@ -169,17 +169,22 @@ the field from the yaml alone, so the dataclass default (`denorm`) wins over the
 
 ## Naming
 
-    <exp>.<hackathon_date>.<realm>.<tuning_set>.S<seed>
-    E05  .aug26          .atm   .A3_B16_C1_L0_O5_W0_X0.S01
+    <exp>.<hackathon_date>.<realm>.<tuning_set>[.<training_set>].S<seed>
+    E05  .aug26          .atm   .A3_B16_C1_L0_O5_W0_X0                .S01
+    E21  .aug26          .atm   .A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01
 
 The experiment number is one incrementing `E` sequence — E01–E10 atmosphere,
-E11–E17 ocean, and a coupled run would be the next number. `E` is the one letter
+E11–E17 ocean, E18–E28 the stochastic-vs-deterministic block, and a coupled run
+would be the next number. E18–E28 carry a **second** factor word in a field of
+its own; see "Stochastic vs deterministic" below. `E` is the one letter
 the factor alphabet (A, B, C, O, W, X) and the seed (S) both leave free; an
 `A##` or `O##` prefix collides with the aerosol and ocean-cadence factors inside
 the same run id, and `C##` collides with CO₂.
 
 The tuning set is a **fixed-order** factor word `A?_B??_C?_L?_O?_W?_X?`,
-alphabetical by position:
+alphabetical by position. E18–E28 append a second, optional word
+`D?_I?_M?_R??_Z??` in a dotted field of its own, omitted when it is E01's — so
+every aug26 run id is untouched by its existence:
 
 | pos | levels |
 |---|---|
@@ -190,6 +195,11 @@ alphabetical by position:
 | `O` | `O1` 1-daily ocean step · `O5` 5-daily |
 | `W` | `W0` equal · `W1` flux upweight · `W2` away-from-surface dilution · `W3`/`W4` zero one poor channel |
 | `X` | `X0` baseline · `X1` AMP (bf16 autocast) |
+| `D` | `D0` EnsembleLoss (crps 0.9 / energy 0.1) · `D1` MSE — *second word* |
+| `I` | `I0` from scratch · `I1` warm start from the deterministic arm |
+| `M` | `M1` · `M2` · `M3` — `stepper_training.n_ensemble` |
+| `R` | `RF1` 1 step, last-step-only · `RF2` 2 steps, both scored · `RS04`/`RS20` sampled schedules |
+| `Z` | `Z00` no noise conditioning · `Z32` · `Z64` — `noise_embed_dim` |
 
 `C1 − C0` measures whether the model uses the channel, not whether it responds to CO₂. `co2vmr` in the h0 stream is strictly increasing at every 6-hourly timestep from 311.4 ppm (1940) to 551.0 ppm (2065) with no seasonal cycle, so Spearman(`co2vmr`, time) = 1.000 exactly: over this record CO₂ *is* a clock, up to a monotone warp the first layer absorbs. Separating forcing response from time-indexing needs CO₂ varied against a fixed time axis, which is an inference-time counterfactual on a trained checkpoint, not another training arm.
 
@@ -200,7 +210,8 @@ Each factor is a separate `WANDB_TAG` as well as being inside
 
 ## Weights & Biases
 
-All 35 runs go to one project so both realms share a workspace:
+All 48 runs -- aug26's 35 and the stochastic block's 13 -- go to one
+project, so both realms and both campaigns share a workspace:
 
 | | |
 |---|---|
@@ -231,7 +242,11 @@ person's identity, use a team **service account**. Keys live in `~/.netrc` or
 
 ## The run list
 
-35 runs, 129 nodes. `make_ablation_config.py --list` prints it.
+Two campaigns in one list. **aug26 is 35 runs, 129 nodes** (E01-E17, P1-P4);
+the **stochastic-vs-deterministic block is 13 runs, 52 nodes** (E18-E28,
+P5-P8), added 2026-09-02 and sized for a window of its own.
+`make_ablation_config.py --list` prints both and totals them separately.
+`submit-campaign.sh` defaults to `--max-priority 4`, so it queues aug26 only.
 
 ### Atmosphere — E01–E10, E15
 
@@ -274,6 +289,251 @@ separate `A3_C0` cell that opens the aerosol/GHG interaction.
 | E14 | `A0_B16_C0_L0_O5_W4_X0` | zero deepest meridional velocity | 1 | 2 |
 | E16 | `A0_B16_C0_L0_O5_W3_X0` | zero `iceVolumeTotal` | 1 | 2 |
 | E17 | `A0_B16_C0_L0_O1_W0_X0` | 1-daily stepping (vs E11's 5-daily) | 1 | 2 |
+
+### Stochastic vs deterministic — E18–E28
+
+Added 2026-09-02, from `E3SM_Stochastic_vs_Deterministic_Ideas.pptx` and the
+eleven configs that came with it. All eleven experiments sit on **E01's tuning
+set** and vary only the training-objective word, so E01 — three seeds, already
+run — is the control for the whole block and no baseline has to be repeated.
+
+The spine is a 2×4 factorial: two objectives crossed with four training
+rollouts. E01 fills one cell, so seven of the eight are new.
+
+| | `RF1` 1 step | `RF2` 2 steps | `RS04` sampled ≤4 | `RS20` sampled ≤20 |
+|---|---|---|---|---|
+| **stochastic** `D0_M2_Z32` | **E01** | E18 | E19 | E20 |
+| **deterministic** `D1_M1_Z00` | **E21** | E22 | E23 | E24 |
+
+plus three one-factor arms off E01 and one curriculum run:
+
+| exp | training word | what it adds vs E01 | seeds | pri |
+|---|---|---|---|---|
+| **E21** | `D1_I0_M1_RF1_Z00` | **deterministic control** — MSE, no noise, 1 member | 3 | P5 |
+| E18 | `D0_I0_M2_RF2_Z32` | fixed 2-step rollout, both steps scored | 1 | P8 |
+| E19 | `D0_I0_M2_RS04_Z32` | sampled rollout, max 4 steps | 1 | P6 |
+| E20 | `D0_I0_M2_RS20_Z32` | the deck's sampled rollout, max 20 steps | 1 | P8 |
+| E22 | `D1_I0_M1_RF2_Z00` | deterministic + 2-step (the deck's ACE2 baseline) | 1 | P6 |
+| E23 | `D1_I0_M1_RS04_Z00` | deterministic + sampled ≤4 | 1 | P6 |
+| E24 | `D1_I0_M1_RS20_Z00` | deterministic + sampled ≤20 | 1 | P8 |
+| E25 | `D0_I0_M1_RF1_Z32` | one member: CRPS degenerates to MAE | 1 | P6 |
+| E26 | `D0_I0_M3_RF1_Z32` | three members | 1 | P6 |
+| E27 | `D0_I0_M2_RF1_Z64` | `noise_embed_dim` 64 | 1 | P6 |
+| E28 | `D0_I1_M2_RF1_Z32` | curriculum: E21's weights, then stochastic | 1 | P7 |
+
+13 runs, 4 nodes each, **52 nodes**. They are P5–P8 on purpose:
+`submit-campaign.sh` defaults to `--max-priority 4`, so an aug26 submission
+cannot release them. They need a window of their own — the aug26 reservation is
+at 83% and ends 2026-09-05.
+
+#### The word
+
+    D0 EnsembleLoss (crps 0.9 / energy 0.1)   D1 MSE
+    I0 from scratch                           I1 warm start from the D1 arm
+    M1 / M2 / M3                              stepper_training.n_ensemble
+    RF1 1 step, last-step-only                RF2 2 steps, both scored
+    RS04 sampled {1:.6, 2:.2, 4:.2}           RS20 sampled {1:.6 2:.2 4:.1 12:.05 20:.05}
+    Z00 no noise conditioning                 Z32 / Z64 noise_embed_dim
+
+It is a **second, optional dotted field**, emitted only when it is not the
+baseline:
+
+    E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01                       <- unchanged
+    E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01
+
+Widening the *first* word instead would have renamed all 35 aug26 runs, which
+are wandb run names and scratch directory names for a campaign that is already
+running. `check_campaign.py` parses both shapes and asserts the omitted case as
+hard as the present one: a run id with no training word is a claim that the run
+is at E01's objective, and that claim is checked against `stepper_training` and
+the builder like every other.
+
+`RF2` moves two things at once — two steps **and** two scored steps
+(`optimize_last_step_only: false`). That is the deck's own pairing and the
+standard ACE2 recipe, so it ships that way, but do not caption E18−E01 as "the
+effect of rollout length".
+
+#### Rebased onto E01, not onto the deck's baseline
+
+The deck's baseline is CRPS / noise **64** / 2 members / multistep; E01 is
+CRPS / noise **32** / 2 members / **one** step. Anchoring on E01 buys three
+things: the control already exists with three seeds and does not have to be
+paid for; the deck's "reduce the noise dimension to 32" becomes "raise it to 64"
+against a control that is already running; and every arm is one factor from
+something that has an error bar, which is what the campaign's single-seed rule
+requires. Four differences from the deck's configs are deliberate:
+
+| | the deck's configs | here | why |
+|---|---|---|---|
+| dataset | AMIP-151 (`amip_151`) | E3SMv3 historical | the deck's configs are for a different run entirely; nothing in them is comparable to E01 as written |
+| loss weights | a hand-tuned set (`T_0` 0.5, `specific_total_water_0` 0.01, `FLDS` 2 …) | W0, equal | E01 is the equal-weight control, and the deck's names (`specific_total_water_*`, `FSDS`, `surface_upward_longwave_flux`) are not this configuration's outputs (`STW_*`, `FSNS`, `FLUS`) — they would apply to nothing |
+| noise dim | 64 | 32 | E01's, per the page's FOR NASER box |
+| baseline rollout | multistep | 1 step | E01's |
+
+#### Three things in the attached configs that do not work
+
+Verified, not inferred.
+
+1. **`noise_embed_dim: 0` with `noise_type: isotropic` crashes.** All four
+   `exp4_deterministic_*.yaml` set exactly that. `NoiseConditionedModel.forward`
+   draws its noise field *before* the layers decide to ignore it, so at zero
+   channels it runs the inverse SHT on a zero-channel tensor and dies:
+   `RuntimeError: MKL FFT error: Intel oneMKL DFTI ERROR: Inconsistent
+   configuration parameters`. Reproduced 2026-09-02 on
+   `NoiseConditionedSFNOBuilder`. `noise_type: gaussian` at zero channels is a
+   `randn` of zero size and is free, so **Z00 switches the type as well as the
+   width** and `check_campaign.py` fails any config that does not.
+
+2. **`exp5_deterministic_multistep.yaml` is byte-identical to
+   `exp1_stochastic_seed1_baseline.yaml`** apart from `experiment_dir` and a
+   missing `seed`. It has `n_ensemble: 2`, `EnsembleLoss` and
+   `noise_embed_dim: 64` — it is the stochastic baseline, not a deterministic
+   multistep run. The deck's exp5 ("impact of adding multistep to ACE2") is
+   E24 here.
+
+3. **`exp2` and `exp3` carry no `seed:` at all** while `exp1` carries 4394.
+   `TrainConfig.seed` defaults to `None`, so those two are not seed-matched to
+   the baseline they are differenced against — every one of their numbers
+   includes a seed change. Fixed here by construction: the generator writes
+   `seed` from the run id and the checker asserts they agree.
+
+Three more that would have cost a run rather than failed outright:
+`aggregator.log_histograms: true` is a **deprecated legacy flag** — dacite
+matches the `Legacy*AggregatorConfig` union member by shape, so it parses,
+warns once and silently re-enables every 2D image metric (see "wandb: 1D logs");
+15 inference initial conditions do not divide 16 ranks, which surfaces minutes
+into an allocation as `UnionMatchError: can not match type "list"`; and the
+weighted `inference` block starts at 1991, which at 7300 steps rolls to 1996 —
+through the 1995–2000 validation window, so checkpoint selection would see
+held-out data. All three are what `check_campaign.py` exists to catch.
+
+#### What the comparison costs, and why equal epochs is not equal compute
+
+`optimize_last_step_only` runs every step but the scored one under
+`torch.no_grad` (`single_module.py`, `_accumulate_loss`), so an *n*-step sample
+costs (*n*−1) forward passes plus one forward+backward, and a forward pass is
+about a third of a training step. `n_ensemble` multiplies all of it, because
+`broadcast_ensemble` folds members into the batch. Relative to E01's step:
+
+| rollout | E[steps] | rel | | members | rel |
+|---|---|---|---|---|---|
+| `RF1` | 1.0 | 1.00 | | `M1` | 0.50 |
+| `RF2` | 2.0 | **2.00** (both scored) | | `M2` | 1.00 |
+| `RS04` | 1.6 | 1.20 | | `M3` | 1.50 |
+| `RS20` | 3.0 | 1.67 | | | |
+
+Applied to E01's measured 63.6 h of training plus 14.2 h of inline inference
+and ~3 h of setup:
+
+| exp | rel | training | run | fits 126 h? |
+|---|---|---|---|---|
+| E01 | 1.00 | 63.6 h | **81 h** | yes |
+| E18 | 2.00 | 127 h | **144 h** | **no** |
+| E19 | 1.20 | 76 h | 93 h | yes |
+| E20 | 1.67 | 106 h | 123 h | barely |
+| E21 | 0.50 | 32 h | **49 h** | yes |
+| E22 | 1.00 | 64 h | 81 h | yes |
+| E23 | 0.60 | 38 h | 55 h | yes |
+| E24 | 0.83 | 53 h | 70 h | yes |
+| E25 | 0.50 | 32 h | 49 h | yes |
+| E26 | 1.50 | 95 h | 112 h | yes |
+| E27 | 1.00 | 64 h | 81 h | yes |
+| E28 | 1.00 | 64 h | 81 h, after E21's 49 | yes, serialized |
+
+~4,100 node-hours in total, but the critical path is **E18 at 144 h = 6 days**,
+which no 126 h window holds. E18 and E20 are P8 for that reason and not because
+they matter least — E18 is the deck's exp3. If the window is five days, drop
+them or run them at 24 epochs and report the epoch.
+
+**The asymmetry is the finding, not the accounting.** The deterministic pole
+runs one ensemble member, so at equal epochs it gets *half* the compute of the
+stochastic pole. "Stochastic beats deterministic at 30 epochs" and "stochastic
+beats deterministic per FLOP" are different claims and this block only answers
+the first. The cheapest fix is one more run — E21 at 60 epochs, which lands at
+~64 h of training and is compute-matched to E01 — and it is deliberately **not**
+in the list, because `max_epochs` is not a factor in either word and adding it
+for one run would rename things. Run it by hand:
+
+```bash
+./make_ablation_config.py --exp E21 --epochs 60 -o /tmp/e21-60ep
+```
+
+and report it under its own name. Until then, say "at equal epochs".
+
+#### Ensemble size is a training knob here, not an evaluation one
+
+`stepper_training.n_ensemble` is how many members the *loss* sees per batch
+element. It is not the inference ensemble, and none of the deck's analysis slide
+— spread-skill ratio, CRPS, return periods, relative economic value — needs
+`M3` to be measured. Those are all inference-time quantities, computed from as
+many rollouts as anyone cares to run off a saved checkpoint, and
+`checkpoint_save_epochs: {step: 1}` means every epoch of every run is on disk
+for exactly that. E26 answers "does a three-member training objective train a
+better model", which is a narrower and more expensive question than the slide's.
+
+**The evaluation is the gap, not the configs.** Nothing in this block computes a
+return period, an economic value, a spread-skill ratio at rollout, or a spectral
+tail. The inline aggregators log time-mean rmse/bias, power spectra, histograms
+and an ENSO index; the rest is offline work on the checkpoints. Budget for it
+separately, and note that E21's three seeds are already a three-member
+multi-model ensemble for the deterministic side, bought as error bars.
+
+#### The curriculum arm (E28) and why it loads
+
+Deck exp8: train deterministically, then continue stochastically. The mechanism
+is `stepper_training.parameter_init.weights_path`, and it works here for a
+non-obvious reason — `overwrite_weights` requires the source state dict's names
+to be a **subset** of the destination's. Verified 2026-09-02 by building both
+models and differencing their state dicts: a `Z00` model's parameters are an
+exact subset of a `Z32` model's, the only extras being the eight conditional
+layer-norm weights the noise drives (`blocks.*.norm*.W_scale_2d/W_bias_2d`), and
+no shared parameter changes shape. So E21's checkpoint loads into E28's model
+and the noise-conditioning layers stay at their random initialization.
+
+The path is not in the config. Generated files may not name anyone's scratch —
+`check_campaign.py` fails on `/pscratch/` — and the parent's checkpoint lives
+under whichever `$CAMPAIGN_ROOT` owns E21. So the config carries
+`weights_path: OVERRIDE_ME_WARM_START`, the `.env` carries the parent's **run
+id**, and `run-train.sh` resolves it at submit time and passes the dotlist
+override, refusing to submit if the checkpoint is not there. That refusal
+matters: without it a missing parent would train E28 from scratch under a
+warm-start run id, and nothing downstream could tell.
+
+#### Decision rules for this block
+
+Same rule as the rest of the campaign — a single-seed arm counts only if it
+falls outside its parent's three-seed spread on the same metric at the same
+epoch. Both poles have three seeds, so every arm has a parent.
+
+| claim | what would have to be true |
+|---|---|
+| **stochastic beats deterministic** | E01 beats E21 on `5yr_test` `time_mean/rmse/channel_mean` outside both S01–S03 spreads — and say "at equal epochs", per the compute asymmetry above |
+| **the ensemble objective is what does it, not the noise** | E25 (`M1`, CRPS → MAE) sits with E21 rather than with E01. If E25 tracks E01, the win is the *loss*, not the ensemble |
+| **more members help** | E26 beats E01 outside E01's spread. The pairwise CRPS term is zero at one member and grows with the third, so this is where it should show if anywhere |
+| **the noise width matters** | E27 differs from E01 outside E01's spread. A null here is a real result: it says 32 is enough |
+| **multi-step training helps** | read the 2×4 row, not a single difference. If RS04→RS20 is flat on both rows, the 20-step outcome is buying nothing for 40% more compute |
+| **the curriculum helps** | E28 beats both E01 (same objective, cold start) and E21 (same start, deterministic objective). Beating only one of them is not the claim |
+
+#### What is deliberately not here
+
+* **A clean `RF2`** with `optimize_last_step_only: true`, which would separate
+  "two steps" from "two scored steps". One line in `ROLLOUTS`; worth adding if
+  E18−E01 turns out large.
+* **The CRPS/energy-score split.** `crps_weight: 0.9 / energy_score_weight: 0.1`
+  is inherited and unablated, as are `almost_fair_crps_alpha` and
+  `finite_difference_crps_weight`. For a model whose selling point is spatial
+  structure, the finite-difference CRPS term is the most obviously untested knob
+  in the config, and it costs one run.
+* **`noise_type`.** `isotropic` vs `gaussian` is a modelling choice about the
+  spatial correlation of the perturbation and nothing has compared them.
+* **Hybrid mean + latent residual** (Kossaifi 2026, deck slide 3). Not
+  expressible in this config space; it is a code change.
+* **Deterministic ensembles** (bred vectors, multi-IC). An inference harness,
+  not a training config.
+* **The ocean.** Samudra takes no noise input, so the whole word is
+  atmosphere-only and the generator raises if it is set on an `ocn` run. Note
+  the coupled config's `n_ensemble: 2` on the ocean side already buys nothing
+  for exactly this reason (see "Reference facts").
 
 ### Node budget
 
@@ -1486,7 +1746,7 @@ by its 8 inference ICs. **Never submit any of this to a 4-hour queue.**
 | `config-train-cpl.yaml` | coupled; not in the aug26 list, regenerate with `make_cpl_config.py` after any baseline change |
 | `make_ablation_config.py` | the generator; `RUNLIST` transcribes the page |
 | `check_campaign.py` | asserts every emitted config matches its run id; run by `generate-campaign.sh` |
-| `runs/*.yaml`, `runs/*.env` | 35 generated runs plus wandb/sizing provenance |
+| `runs/*.yaml`, `runs/*.env` | 48 generated runs (aug26's 35 + the stochastic block's 13) plus wandb/sizing provenance |
 | `runs/MANIFEST.tsv` | priority, runid, realm, nodes, ranks, batch, seed, note |
 | `sbatch-scripts/generate-campaign.sh` | regenerates `runs/` and checks it |
 | `sbatch-scripts/submit-campaign.sh` | walks the manifest in priority order; `--dry-run`, `--preflight` |

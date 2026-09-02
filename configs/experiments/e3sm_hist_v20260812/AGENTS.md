@@ -26,6 +26,132 @@ history, kept so decisions do not have to be rediscovered.
   directory and the page disagree, this directory is wrong.
 * **Never `git checkout` a tracked file here.** Several files carry uncommitted
   work at any given time; a checkout silently discards it.
+* **The 35 aug26 run ids are load-bearing and must not change.** They are live
+  wandb run names and live scratch directory names. Anything added to the factor
+  alphabet goes in the second, optional training word (`D_I_M_R_Z`), which is
+  omitted when it is E01's. After any generator change, check that
+  `git diff --stat runs/` touches nothing but `MANIFEST.tsv`.
+
+## 2026-09-02 — the stochastic-vs-deterministic block, E18–E28
+
+Source: `E3SM_Stochastic_vs_Deterministic_Ideas.pptx` (eight planned
+experiments) and eleven yaml configs that came with it. Both describe an
+AMIP-151 campaign, not this one; what was taken from them is the *design*, not
+the files. `EXPERIMENTS.md` "Stochastic vs deterministic — E18–E28" is the
+reference; this is what happened and why.
+
+### Rebased onto E01 rather than onto the deck's own baseline
+
+The deck's baseline is CRPS / noise 64 / 2 members / multistep. E01 is CRPS /
+noise 32 / 2 members / **one** step. Anchoring the block on E01 means the
+control is already run with three seeds, "reduce the noise dim to 32" inverts
+into "raise it to 64" against something with an error bar, and every arm is one
+factor from its parent — which is what the campaign's single-seed rule needs.
+It also took the block from 14 runs to 13.
+
+The deck's other three differences from E01 are dropped on purpose: a different
+dataset, a hand-tuned loss weight set whose variable names (`FSDS`,
+`specific_total_water_*`, `surface_upward_longwave_flux`) are not this
+configuration's outputs at all, and the multistep rollout, which is now a factor
+rather than a baseline.
+
+### A second factor word, not a wider first one
+
+    E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01                       <- unchanged
+    E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01
+
+Seven more positions in the first word would have renamed all 35 aug26 runs, and
+those ids are live wandb run names and live scratch directory names — the
+reservation runs until 2026-09-05. So the training-objective factors are a
+separate dotted field, emitted only when they are not E01's. Verified: after
+`generate-campaign.sh`, `git diff --stat runs/` is `MANIFEST.tsv | 13 +++`, and
+every one of the 35 existing yaml and env files is byte-identical.
+
+`check_campaign.py` parses both shapes and asserts the *absent* word as hard as
+the present one — an id with no training word claims the run is at E01's
+objective, and that claim is checked against `stepper_training` and the builder
+like every other. `apply_training` does the same from the other side: on a
+default run it does not edit the config, it *asserts* that
+`config-train-atm.yaml` still matches `Training()`'s defaults, and raises if the
+baseline has drifted. Without that, a change to the baseline would silently
+make every omitted word a lie.
+
+### Three things in the attached configs that do not work
+
+Reproduced, not inferred.
+
+1. **`noise_embed_dim: 0` with `noise_type: isotropic` raises.** All four
+   `exp4_deterministic_*.yaml` set it. `NoiseConditionedModel.forward` draws its
+   noise field before the layers decide to ignore it, so at zero channels it
+   calls the inverse SHT on a zero-channel tensor: `RuntimeError: MKL FFT error:
+   Intel oneMKL DFTI ERROR: Inconsistent configuration parameters`. Built both
+   models at `embed_dim: 16` on CPU to confirm; `gaussian` at zero channels is a
+   `randn` of zero size and returns cleanly. Z00 therefore sets the type too,
+   and the checker fails a config that does not.
+2. **`exp5_deterministic_multistep.yaml` is `exp1_stochastic_seed1_baseline.yaml`**
+   apart from `experiment_dir` and a dropped `seed` — `n_ensemble: 2`,
+   `EnsembleLoss`, `noise_embed_dim: 64`. The deck's "impact of adding multistep
+   to ACE2" would have measured nothing. It is E24 here.
+3. **`exp2` and `exp3` carry no `seed:`** while `exp1` carries 4394, and
+   `TrainConfig.seed` defaults to `None`. Every difference against exp1 would
+   have included an unrecorded seed change.
+
+Three more that cost a run rather than failing at once, all of them things this
+directory already had a guard for: `aggregator.log_histograms: true` is the
+deprecated legacy union member that silently re-enables the 2D image metrics;
+15 inference ICs do not divide 16 ranks; and the weighted `inference` block
+starts at 1991, which at 7300 steps rolls to 1996 through the 1995–2000
+validation window, so checkpoint selection would have seen held-out data.
+
+### The curriculum arm loads, and it was checked rather than assumed
+
+E28 continues E21's deterministic weights under the stochastic objective.
+`overwrite_weights` requires the source state dict's names to be a subset of the
+destination's, so the question was whether a Z00 checkpoint fits a Z32 model.
+Built both and differenced the state dicts: it is an exact subset, the only
+extras being the conditional layer-norm weights the noise drives
+(`blocks.*.norm*.W_scale_2d` / `W_bias_2d`), and no shared parameter changes
+shape. So it loads and the noise-conditioning layers stay randomly initialized.
+
+The checkpoint path cannot live in the config — generated files may not name
+anyone's scratch, and the parent's output is under whichever `$CAMPAIGN_ROOT`
+owns E21. The config carries `OVERRIDE_ME_WARM_START`, the `.env` carries the
+parent's *run id*, and `run-train.sh` resolves it at submit time and **refuses**
+if the checkpoint is not there. That refusal is the point: a silent fallback
+would have trained E28 from scratch under a warm-start run id.
+
+### P5–P8, so an aug26 submission cannot release them
+
+`submit-campaign.sh` defaults to `--max-priority 4`. The block is 52 nodes and
+~4,100 node-hours against a reservation already at 83% that ends on the 5th, so
+it needs a window of its own and must not leak into this one. Queueing it takes
+an explicit `--max-priority 8`.
+
+### The cost asymmetry is worth saying out loud
+
+`optimize_last_step_only` runs the unscored steps under `torch.no_grad`, so an
+n-step sample is (n−1) forwards plus one forward+backward; `n_ensemble`
+multiplies the lot. The deterministic pole runs one member, so **at equal epochs
+it gets half the stochastic pole's compute**. The block answers "better at 30
+epochs", not "better per FLOP". The compute-matched control is E21 at 60 epochs
+and it is deliberately not in the run list — `max_epochs` is not a factor in
+either word, and adding it for one run would rename things. Run it by hand and
+report it under its own name.
+
+E18 (`RF2`, both steps scored) is 2.00x E01's training cost and lands at ~144 h,
+which no 126 h window holds. It is P8 for that reason, not because it matters
+least.
+
+### Verified
+
+- 48 configs generated, `check_campaign.py` clean, all 13 new ones pass
+  `fme.ace.validate_config`.
+- The checker was negative-tested: a D1 arm whose loss was flipped back to
+  `EnsembleLoss` and whose `noise_type` was set to `isotropic`, an `RS20` arm
+  whose schedule was truncated to one outcome, and an `I1` arm whose
+  `parameter_init` was removed — all three caught, with the reason named.
+- `submit-campaign.sh --dry-run` still reports 35 runs / 129 nodes by default,
+  and 48 / 181 at `--max-priority 8`.
 
 ## 2026-08-29 (later) — E## rename, W3, the O1 cadence, and wandb
 

@@ -5,6 +5,7 @@
 #     ./submit-campaign.sh --preflight            # stage + validate all, queue none
 #     ./submit-campaign.sh                        # queue everything (P1..P4)
 #     ./submit-campaign.sh --max-priority 3       # queue P1..P3 only
+#     ./submit-campaign.sh --max-priority 8       # ALSO the stochastic block
 #     ./submit-campaign.sh --only atm             # one realm
 #     ./submit-campaign.sh --only E05             # one experiment
 #
@@ -69,6 +70,10 @@ MANIFEST="$EXP/runs/MANIFEST.tsv"
 DRY=0
 PRE=0
 ONLY=""
+# P1-P4 is the aug26 campaign; P5-P8 is the stochastic-vs-deterministic block
+# (E18-E28), which is sized for a window of its own and must not be released by
+# an aug26 submission. Leaving the default at 4 is what keeps it out: queueing
+# it takes an explicit --max-priority 5..8.
 MAXP=4
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -77,8 +82,9 @@ while [ $# -gt 0 ]; do
         # sizing and the config validator for every run without queueing one.
         --preflight)    PRE=1; shift ;;
         --only)         ONLY="${2:?--only needs a realm or experiment id}"; shift 2 ;;
-        --max-priority) MAXP="${2:?--max-priority needs 1..4}"; shift 2 ;;
+        --max-priority) MAXP="${2:?--max-priority needs 1..8}"; shift 2 ;;
         *) echo "usage: $0 [--dry-run|--preflight] [--only atm|ocn|E05] [--max-priority N]" >&2
+           echo "       N is 1..4 for the aug26 campaign, 5..8 for the stochastic block" >&2
            exit 2 ;;
     esac
 done

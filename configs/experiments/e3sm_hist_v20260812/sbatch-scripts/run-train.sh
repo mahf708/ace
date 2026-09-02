@@ -132,6 +132,29 @@ if [ -n "$RUNID" ]; then
             SIZE=(--nodes="$FME_NODES")
             echo "sizing: ${FME_NODES} nodes / ${FME_RANKS:-?} ranks" >&2
         fi
+        # Warm start (the I1 arm of the training word). The .env names a RUN ID,
+        # not a path -- runs/ has to be byte-identical for every teammate, and
+        # the parent's checkpoint lives under whoever's $CAMPAIGN_ROOT owns it.
+        # Resolve it here, where the owner and the root are both known, and pass
+        # it as a dotlist override exactly like experiment_dir.
+        #
+        # Refuse rather than fall back. A missing parent checkpoint would
+        # otherwise train the arm from scratch under a warm-start run id, which
+        # is the failure this directory cares about most: the id would say
+        # "curriculum" and the weights would say "from scratch", and nothing
+        # downstream could tell.
+        if [ -n "${FME_WARM_START_FROM:-}" ]; then
+            WARM="${CAMPAIGN_ROOT}/${FME_WARM_START_FROM}/${FME_WARM_START_CKPT:?FME_WARM_START_FROM set without FME_WARM_START_CKPT}"
+            if [ ! -f "$WARM" ]; then
+                echo "$RUNID warm-starts from $FME_WARM_START_FROM, but" >&2
+                echo "  $WARM does not exist." >&2
+                echo "  Run $FME_WARM_START_FROM to completion first, or point" >&2
+                echo "  CAMPAIGN_ROOT at the scratch that owns it." >&2
+                exit 1
+            fi
+            export FME_EXTRA_OVERRIDES="stepper_training.parameter_init.weights_path=$WARM"
+            echo "warm start: $WARM" >&2
+        fi
     else
         echo "WARNING: no ${RUNID}.env -- the run will be unnamed in wandb" >&2
     fi

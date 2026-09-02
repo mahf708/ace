@@ -47,10 +47,17 @@ uv run torchrun --nproc_per_node 4 -m fme.ace.train $PSCRATCH/smoke-ocn.yaml
 
 # 4. the whole 2026-08-31 campaign: 35 runs generated from the two baselines
 ./sbatch-scripts/generate-campaign.sh --list      # run list + node budget
-./sbatch-scripts/generate-campaign.sh             # writes runs/
+./sbatch-scripts/generate-campaign.sh             # writes runs/ (48 configs)
 ./sbatch-scripts/submit-campaign.sh --dry-run     # what would be queued
 RESERVATION=_CAP_aigs_hist ./sbatch-scripts/submit-campaign.sh
+
+# 5. the stochastic-vs-deterministic block (E18-E28) -- its own window
+./sbatch-scripts/submit-campaign.sh --dry-run --max-priority 8
 ```
+
+`generate-campaign.sh` writes 48 configs: aug26's 35 (P1-P4) and the
+stochastic block's 13 (P5-P8). `submit-campaign.sh` queues P1-P4 only unless
+told otherwise, so the second block cannot be released by accident.
 
 ### Job names and logs
 
@@ -660,6 +667,34 @@ dotlist overrides, which would misparse it.
 `stepper_training.<realm>.parameter_init.weights_path` for the finetune. Pass
 each component's `best_ckpt.tar` (a stepper checkpoint, not the training-state
 `ckpt.tar`). With no flags the realms train from scratch.
+
+### Stochastic vs deterministic: E18–E28
+
+Added 2026-09-02. Thirteen atmosphere runs on **E01's tuning set**, varying only
+the training objective — loss (`EnsembleLoss` vs `MSE`), ensemble members,
+training rollout and `noise_embed_dim`. They carry a second, optional factor
+word in a field of their own:
+
+    E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01                       <- unchanged
+    E21.aug26.atm.A0_B16_C0_L0_O5_W0_X0.D1_I0_M1_RF1_Z00.S01
+
+E01 is the control for the whole block, so it is not repeated. **The block is
+P5–P8 and `submit-campaign.sh` defaults to `--max-priority 4`**, so an aug26
+submission cannot release it; queueing it takes `--max-priority 8` and, given
+52 nodes and ~4,100 node-hours, a window of its own.
+
+Three things worth knowing before touching it:
+
+* `noise_embed_dim: 0` requires `noise_type: gaussian`. With `isotropic` the
+  model draws its noise field before the layers ignore it and dies in the FFT.
+  The generator handles it; the checker enforces it.
+* E28 warm-starts from E21 and `run-train.sh` **refuses to submit it** until
+  E21's `best_ckpt.tar` exists under `$CAMPAIGN_ROOT`.
+* At equal epochs the deterministic pole gets half the stochastic pole's
+  compute, because it runs one ensemble member. Say "at equal epochs".
+
+Full design, cost table and decision rules: EXPERIMENTS.md, "Stochastic vs
+deterministic — E18–E28".
 
 ### Inference blocks
 

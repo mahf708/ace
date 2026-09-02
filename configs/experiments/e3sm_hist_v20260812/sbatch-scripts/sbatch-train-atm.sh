@@ -77,7 +77,10 @@ export MASTER_PORT=29507       # distinct per realm: two runs on a node collide 
 # grow with contention; the only cost is that a genuine hang takes that long to
 # be reported, and the walltime requeue still catches it.
 export FME_DIST_TIMEOUT_MINUTES=${FME_DIST_TIMEOUT_MINUTES:-180}
-export FME_OVERRIDE_ARGS="experiment_dir=$FME_OUTPUT_DIR"
+# FME_EXTRA_OVERRIDES carries anything run-train.sh had to resolve at
+# submit time -- currently only the warm-start checkpoint path, which
+# depends on $CAMPAIGN_ROOT and so cannot live in the generated config.
+export FME_OVERRIDE_ARGS="experiment_dir=$FME_OUTPUT_DIR ${FME_EXTRA_OVERRIDES:-}"
 
 # Banner. `set -x` makes the log a wall of trace, and every atmosphere run
 # used to be named fme-hist-atm, so a log told you almost nothing about which

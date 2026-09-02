@@ -42,7 +42,28 @@ AEROSOL_STATE = {
     "A2": (False, True),
     "A3": (True, True),
 }
-EMBED = {"embed_dim": 384, "noise_embed_dim": 32}
+EMBED = {"embed_dim": 384}
+# The training-objective word, added 2026-09-02. Duplicated from
+# make_ablation_config.Training/ROLLOUTS on purpose, like everything else here.
+#
+# TRAINING_BASELINE is what E01 is, and the run id of a baseline run OMITS it --
+# so this string is also the assertion that an aug26 config has not drifted into
+# the new block's territory without saying so in its name.
+TRAINING_BASELINE = "D0_I0_M2_RF1_Z32"
+OBJECTIVE_LOSS = {"D0": "EnsembleLoss", "D1": "MSE"}
+# (n_forward_steps, optimize_last_step_only). The dict form is the yaml the
+# generator writes for a sampled schedule.
+ROLLOUTS = {
+    "RF1": (1, True),
+    "RF2": (2, False),
+    "RS04": ({1: 0.6, 2: 0.2, 4: 0.2}, True),
+    "RS20": ({1: 0.6, 2: 0.2, 4: 0.1, 12: 0.05, 20: 0.05}, True),
+}
+# noise_embed_dim 0 with noise_type isotropic calls an inverse SHT on a
+# zero-channel tensor and dies in the FFT. Verified 2026-09-02; the deck's own
+# deterministic configs had exactly this combination.
+NOISE_TYPE_AT_ZERO = "gaussian"
+WARM_START_PLACEHOLDER = "OVERRIDE_ME_WARM_START"
 LOADER = {"num_data_workers": 8, "prefetch_factor": 4}
 # One project for both realms, and the team entity rather than the account.
 WANDB = {"project": "SamudrACE-E3SMv3", "entity": "e3sm-aig"}
@@ -146,17 +167,183 @@ def check_selection_in_sample(d: dict, realm: str, ocean: str) -> list[str]:
     return bad
 
 
+def check_training_word(
+    d: dict,
+    builder_cfg: dict,
+    objective: str,
+    init: str,
+    members: str,
+    rollout: str,
+    noise: str,
+    path: pathlib.Path,
+) -> list[str]:
+    """The D_I_M_R_Z word against `stepper_training` and the builder.
+
+    Every one of these is invisible in a plot: two runs with the same tuning
+    word and different objectives produce the same axes, the same channel names
+    and different answers, and the only thing separating them is the run id. So
+    the id is checked against the file for all five, including for the aug26
+    runs that omit the word entirely -- an omitted word is a claim that the run
+    is at E01's objective, and that claim is worth as much as an explicit one.
+    """
+    bad: list[str] = []
+    st = d["stepper_training"]
+
+    def want(cond: bool, msg: str) -> None:
+        if not cond:
+            bad.append(msg)
+
+    want(
+        objective in OBJECTIVE_LOSS,
+        f"unknown objective {objective}",
+    )
+    if objective in OBJECTIVE_LOSS:
+        actual = st["loss"]["type"]
+        want(
+            actual == OBJECTIVE_LOSS[objective],
+            f"{objective} implies loss type {OBJECTIVE_LOSS[objective]}, "
+            f"config has {actual}",
+        )
+        if objective == "D1":
+            want(
+                "kwargs" not in st["loss"],
+                "D1 is MSE but the loss still carries EnsembleLoss kwargs "
+                f"{st['loss'].get('kwargs')} -- LossConfig.build ignores them "
+                "for MSE, so this runs and reads as a lie",
+            )
+
+    want(members.startswith("M") and members[1:].isdigit(), f"bad members {members}")
+    if members[1:].isdigit():
+        n = int(members[1:])
+        want(
+            st["n_ensemble"] == n,
+            f"{members} but n_ensemble is {st['n_ensemble']}",
+        )
+        # EnsembleLoss at one member is legitimate -- it is E25, and CRPS
+        # degenerates to MAE exactly (fme/core/ensemble.py, `if n_ens == 1`) --
+        # but at three or more it is the only setting that makes the pairwise
+        # term mean anything, so a D1/M3 combination is a mistake.
+        want(
+            not (objective == "D1" and n > 1),
+            f"{objective} with {members}: MSE is applied per member, so extra "
+            f"members cost compute and change nothing",
+        )
+
+    want(rollout in ROLLOUTS, f"unknown rollout {rollout}")
+    if rollout in ROLLOUTS:
+        steps, last_only = ROLLOUTS[rollout]
+        actual = st["n_forward_steps"]
+        if isinstance(steps, int):
+            want(
+                actual == steps,
+                f"{rollout} is a fixed {steps}-step rollout, config has {actual}",
+            )
+        else:
+            outcomes = (
+                actual.get("outcomes") if isinstance(actual, dict) else None
+            )
+            got = (
+                {o["steps"]: o["probability"] for o in outcomes}
+                if outcomes
+                else None
+            )
+            want(
+                got == steps,
+                f"{rollout} sampled schedule is {steps}, config has {got}",
+            )
+        want(
+            st["optimize_last_step_only"] is last_only,
+            f"{rollout} implies optimize_last_step_only {last_only}, config has "
+            f"{st['optimize_last_step_only']}",
+        )
+
+    want(noise.startswith("Z") and noise[1:].isdigit(), f"bad noise level {noise}")
+    if noise[1:].isdigit():
+        z = int(noise[1:])
+        want(
+            builder_cfg["noise_embed_dim"] == z,
+            f"{noise} but noise_embed_dim is {builder_cfg['noise_embed_dim']}",
+        )
+        if z == 0:
+            # The wrapper draws its noise field before the layers decide to
+            # ignore it, so isotropic noise at zero channels runs an inverse
+            # SHT on a zero-channel tensor and dies in the FFT. Verified
+            # 2026-09-02.
+            want(
+                builder_cfg.get("noise_type") == NOISE_TYPE_AT_ZERO,
+                f"{noise} with noise_type "
+                f"{builder_cfg.get('noise_type')!r}: at zero channels only "
+                f"{NOISE_TYPE_AT_ZERO!r} is safe -- isotropic calls the inverse "
+                f"SHT on a zero-channel tensor and raises an MKL FFT error",
+            )
+        want(
+            not (z == 0 and objective == "D0"),
+            "Z00 with D0: an EnsembleLoss over members that cannot differ "
+            "scores a degenerate ensemble at full ensemble cost",
+        )
+        want(
+            not (z > 0 and objective == "D1" and members == "M1"),
+            f"{noise} with D1/M1: noise conditioning is wired up but nothing "
+            f"in the objective can reward using it",
+        )
+
+    init_path = st.get("parameter_init", {}).get("weights_path")
+    if init == "I1":
+        want(
+            init_path == WARM_START_PLACEHOLDER,
+            f"I1 but parameter_init.weights_path is {init_path!r}, expected "
+            f"{WARM_START_PLACEHOLDER!r} -- the real path is per-submitter and "
+            f"run-train.sh overrides it from FME_WARM_START_FROM",
+        )
+        env = path.with_suffix(".env")
+        if env.is_file():
+            want(
+                "FME_WARM_START_FROM=" in env.read_text(),
+                "I1 but the .env names no FME_WARM_START_FROM, so run-train.sh "
+                "would submit it as a from-scratch run under a warm-start id",
+            )
+    elif init == "I0":
+        want(
+            init_path is None,
+            f"I0 but parameter_init.weights_path is set to {init_path!r}",
+        )
+    else:
+        bad.append(f"unknown init set {init}")
+    return bad
+
+
 def check(path: pathlib.Path) -> list[str]:
     """Return a list of complaints about one run config, empty if it is sound."""
     bad: list[str] = []
     d = yaml.safe_load(path.read_text())
     step = d["stepper"]["step"]["config"]
 
+    # `<exp>.<date>.<realm>.<tuning_set>[.<training_set>].S<seed>`. The training
+    # word is present only for the E18-E28 block; its absence means the run is at
+    # the baseline of every factor in it, which is checked below just as
+    # explicitly as its presence is.
     try:
-        exp, campaign, realm, word, seed = path.stem.split(".")
+        fields = path.stem.split(".")
+        if len(fields) == 5:
+            exp, campaign, realm, word, seed = fields
+            train_w = TRAINING_BASELINE
+        elif len(fields) == 6:
+            exp, campaign, realm, word, train_w, seed = fields
+        else:
+            raise ValueError(len(fields))
         aero, batch_w, co2, lr_w, ocean, weights, amp = word.split("_")
+        objective, init, members, rollout, noise = train_w.split("_")
     except ValueError:
-        return [f"run id is not <exp>.<date>.<realm>.<tuning_set>.S<seed>: {path.stem}"]
+        return [
+            f"run id is not <exp>.<date>.<realm>.<tuning_set>[.<training_set>]"
+            f".S<seed>: {path.stem}"
+        ]
+    if train_w == TRAINING_BASELINE and len(fields) == 6:
+        bad.append(
+            f"the training word {train_w} is the baseline, so it must be omitted "
+            f"from the run id -- two ids for one configuration is how a wandb "
+            f"workspace ends up with the same arm under two names"
+        )
 
     def want(cond: bool, msg: str) -> None:
         if not cond:
@@ -217,6 +404,11 @@ def check(path: pathlib.Path) -> list[str]:
                 cfg[k] == v,
                 f"{k} is {cfg[k]}, expected {v} (the page's FOR NASER box)",
             )
+        bad.extend(
+            check_training_word(
+                d, cfg, objective, init, members, rollout, noise, path
+            )
+        )
         want(
             d["train_loader"].get("time_buffer_pool_size") == 2,
             "time_buffer_pool_size is not 2 -- see EXPERIMENTS.md 'Measurements'",
