@@ -87,12 +87,26 @@ reservation. Measured 2026-09-03 (`analysis/card-sweep.sh`):
 | 2 members, 1 step | 21,155 | 48% | 0.903 | 0.826 |
 | 3 members, 1 step | 24,651 | 40% | 1.304 | 1.177 |
 | 2 members, 2 steps both scored | 21,921 | 46% | 1.713 | 1.551 |
+| 2 members, 2 steps last-only | 21,185 | 48% | 1.098 | 0.995 |
+| 2 members, 20 steps last-only | 23,233 | 43% | 5.355 | — |
+| `fdcrps-1` | 21,347 | 48% | 0.870 | 0.795 |
+| `ntype-gauss` | 21,327 | 48% | 0.883 | — |
+| 1 member, MSE, no noise | 15,851 | 61% | 0.418 | — |
 
-The 40 GB card is **9.4–11% slower** — stable across all four variants — which
-buys 5.5x the node pool. Note that **rollout length costs time, not memory**:
+The 40 GB card is **9.4–11% slower** — stable across every variant measured on
+both — which buys 5.5x the node pool.
+
+**Memory is driven by members, with a mild rollout-depth term on top.**
 `use_gradient_accumulation: true` means each scored step's backward runs before
-the next forward, so the sampled-rollout arms are free on memory however long
-they get.
+the next forward, so a both-scored 2-step rollout costs almost nothing extra;
+a fixed 20-step rollout costs about 2 GB over the 1-step arm, sub-linear and far
+below the step count. The worst arm in the campaign is the three-member one at
+40% headroom, not any rollout one.
+
+**`fdcrps` and `ntype` have no cost this probe can resolve.** The baseline
+itself measured 0.903 and 0.868 s/batch on two 40 GB nodes — a 4.0% spread — and
+every loss-axis variant sits inside it. Treat 1.00 ± 0.04 as the answer, and do
+not read a variant that came in faster than baseline as a speedup.
 
 ## Blocked on upstream
 
