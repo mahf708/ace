@@ -131,6 +131,29 @@ has a trap worth stating: the current two-member code pulls the 0.5 out of the
 pairwise term because a two-member mean over one pair makes it cancel, so a
 naive generalization changes the M2 number and silently invalidates REF-S.
 
+### The `mode_weights` fix is one line, and it is verified safe
+
+`analysis/verify_mode_weights_fix.py` monkeypatches the candidate fix rather
+than editing the tree (jobs were reading it) and reports what it changes:
+
+    current:  mode_weights shaped (*([1] * (x_hat.ndim - 1)), n_l, n_m)
+              -> x_hat.ndim + 1 dims, while `es` has x_hat.ndim - 1
+    fix:      size it against `es`:  (*([1] * (es.ndim - 2)), n_l, n_m)
+
+| | before | after |
+|---|---|---|
+| E01 total (0.9/0.1) | 11.936110496520996 | **11.936110496520996** |
+| E01 energy part varies across channels | **no** | yes |
+| pure energy per-channel | `RuntimeError` | 5 channels |
+| pure energy total | 114.26917 | 114.26918 |
+
+**E01's total is bit-identical**, so the fix cannot invalidate the running aug26
+campaign or force a retrain — which is the property that makes this an easy PR.
+What it *does* change is the per-channel diagnostic for every `D0` run: the
+energy term stops contributing a constant and starts contributing each
+channel's own spectral score. Anyone comparing per-channel loss plots across
+the fix should expect them to move.
+
 ### Tier 0: a free measurement that reversed a recommendation
 
 The draft plan proposed running at 12–15 epochs on the argument that arm
