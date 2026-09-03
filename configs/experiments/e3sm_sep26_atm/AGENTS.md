@@ -51,20 +51,36 @@ concurrently so the ratio is clean under shared CFS load:
 | 2 members, 1 step | 21,155 | 0.903 | 0.826 | 1.094 |
 | 3 members, 1 step | 24,651 | 1.304 | 1.177 | 1.108 |
 | 2 members, 2 steps both scored | 21,921 | 1.713 | 1.551 | 1.105 |
+| 2 members, 2 steps last-only | 21,185 | 1.098 | 0.995 | 1.104 |
+| 2 members, 20 steps last-only | 23,233 | 5.355 | — | — |
+| `fdcrps-1` | 21,347 | 0.870 | 0.795 | — |
+| `ntype-gauss` | 21,327 | 0.883 | — | — |
+| 1 member, MSE, no noise | 15,851 | 0.418 | — | — |
 
 9.4–11% slower, stable across every variant, for 5.5x the node pool (1408
 `hbm40g` against 256 `hbm80g` in `gpu_ss11`) and no reservation. Peak memory
 agrees between the cards to within 4 MiB, which is the expected result and a
 check that nothing about the probe was card-specific.
 
-**The memory model was wrong about rollouts and has been corrected.** A
+**The memory model was wrong about rollouts and has been corrected twice.** A
 both-scored two-step rollout was predicted at 28.7 GB and measures 21.9 —
 barely above the one-step number — because `use_gradient_accumulation: true`
 runs each scored step's backward before the next forward, so the two steps'
-activations are never held at once. Memory scales with **members only**; rollout
-length costs time. The sampled-rollout arms are therefore free on memory however
-long they get, and the worst arm in the campaign is the three-member one at 40%
-headroom rather than the rollout one.
+activations are never held at once.
+
+The first correction said "rollout length costs time, not memory". That was too
+strong: a fixed 20-step rollout peaks at 23,233 MiB against the one-step arm's
+21,155, so depth costs about 2 GB — sub-linear, far below the step count, but
+not zero. Memory is driven by **members** with a mild depth term on top, and the
+worst arm in the campaign is the three-member one at 40% headroom rather than
+any rollout one.
+
+That 20-step figure is single-card. Its 80 GB counterpart read 17,471 MiB, which
+is 5.8 GB *below* the one-step arm and therefore impossible; that run had logged
+zero training steps, so its peak was the model-build high-water mark.
+`analysis/card-sweep.sh` now emits `valid=NO-not-a-training-peak` below three
+logged steps, because without it an invalid measurement is indistinguishable
+from a real one and reads as a cross-card disagreement.
 
 **The `rel` cost model was then measured outright**, and the sweep finished
 2026-09-03 with every axis in the run list covered:
@@ -222,6 +238,8 @@ isotropic at zero channels dies in the MKL FFT, reproduced in aug26.
   `UV_TOOL_DIR` and `UV_CACHE_DIR` to node-local storage first.
 
 ## Open
+
+**`TODO.md` is the actionable list.** What follows is the short form.
 
 * **REF-D (aug26 E21) does not exist yet.** Half the run list differences
   against it. This is the schedule's first question, not a detail.

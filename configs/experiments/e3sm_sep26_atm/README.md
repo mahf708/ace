@@ -5,8 +5,8 @@ family, its internals, the member count, the noise conditioning and the
 rollout. Nothing else varies — the channels, batch size, learning rate, loss
 weighting and data are held at the aug26 E01 tuning set.
 
-`PLAN.md` is the design argument and the measurements. This file is what a
-colleague needs to run it.
+`PLAN.md` is the design argument and the measurements, `AGENTS.md` the history,
+**`TODO.md` what is left to do**. This file is what a colleague needs to run it.
 
 ## The two things to know first
 
@@ -168,6 +168,7 @@ code that should be PR'd to `main` on its own `feature/` branch.
 | | |
 |---|---|
 | `PLAN.md` | the design argument, the decision rules and the measurements |
+| `TODO.md` | what is left, ordered by whether it blocks someone else |
 | `config-train-atm.template.yaml` | the template — a template, not a run |
 | `make_campaign.py` | run list, axis tables, guards, generator |
 | `check_campaign.py` | asserts each config agrees with its own run id |
