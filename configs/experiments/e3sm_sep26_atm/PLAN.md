@@ -1,9 +1,14 @@
 # sep26 — an atmosphere-only ablation campaign
 
-Status: **built and staged; the run list awaits the science design goals.**
-`runs/` is generated, checked, validated and smoke-tested; nothing is queued.
-This file is the design argument and the measurement record. `README.md` is the
-reference a colleague reads, `AGENTS.md` the history.
+Status: **built, checked, validated. Nothing queued.** 19 runs, 5,741
+node-hours. This file is the design argument and the measurement record;
+`README.md` is the reference, `TODO.md` what is left, `AGENTS.md` the history.
+
+Superseded by the current scheme: §3 below described a sparse-delta run id that
+has been replaced by an aug26-style fixed-order factor word plus a two-letter
+study prefix. See `README.md` for the convention that is actually in use; §3 is
+kept for the argument about *why* a naming scheme is load-bearing, not for its
+specific proposal.
 
 Branch: `e3sm/exps/sep26-atm-ablation`, off `e3sm/exps/hist-v2026.8.0`
 (**not** off `main` — see "The unmerged dependency").

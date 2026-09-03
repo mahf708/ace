@@ -31,6 +31,44 @@ not have to be rediscovered.
 * The aug26 campaign's E01 and E21 are this campaign's references. They are
   live runs in someone else's directory; nothing here may modify them.
 
+## 2026-09-03 (later) — E18-E28 dropped, and the naming scheme replaced
+
+`0affcb64`, which added aug26's E18-E28 block, was removed from this branch's
+history by `git rebase --onto 0affcb64^ 0affcb64`. aug26 is back to 35 runs and
+its generator no longer carries a training word. sep26's 16 commits replayed
+cleanly: they only ever touched `e3sm_sep26_atm/`. Backup tag
+`backup/pre-drop-e18-e28`.
+
+**That removed E21, which was this campaign's deterministic reference.** RF02
+replaces it at three seeds. RF01, the stochastic pole, is still inherited from
+aug26's E01 rather than generated -- three seeds are already trained and
+re-running them is ~970 node-hours -- and `check_campaign.py:check_rf01_claim`
+now asserts the template still matches that config, so the claim cannot rot.
+
+**The run id changed** from a sparse delta to an aug26-style fixed-order word
+plus a two-letter study prefix, at the user's request:
+
+    LG01.sep26.atm.D0_G1_I0_M1_N0_Q0_R0_Y0_Z0.S01
+
+The trade is deliberate. The sparse delta had a stronger property -- adding an
+*axis* renamed nothing -- but no experiment number and no natural W&B grouping.
+The fixed word gets both back, and recovers most of the no-rename property by
+defining every level of every axis up front, including unused ones: adding a
+level renames nothing, and the axis space of a training-objective ablation is
+closed. `test_adding_a_level_renames_nothing` pins that.
+
+W&B moved to its own project, `ACE2S-sep26-atm`. The experiment id is the run
+group, the factor word is the job type, and every factor token is a tag.
+
+**Schema bug caught by `validate_config`:** a sampled rollout is a
+`TimeLengthProbabilities` -- an `outcomes` list of `{steps, probability}` --
+not the bare `{steps: probability}` mapping the level table is written as. It
+fails with an opaque `UnionMatchError`. The conversion now lives in
+`_rollout_steps` and the checker expects the converted shape. This is the one
+class of error `validate_config` is genuinely good at, as against the two
+runtime blockers it cannot see.
+
+
 ## 2026-09-03 — the campaign opened, and two arms that cannot train
 
 Started from a plan that would have added E29–E39 to aug26. Moved it to its own
