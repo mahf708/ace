@@ -7,9 +7,16 @@ not another, so an end-to-end mean is not a step-time measurement -- it is a
 coin flip on whether the refill was caught.  Report the MEDIAN of the per-window
 rates, and report the max alongside it so the stall stays visible.
 """
-import glob, os, re, sys, statistics as st, datetime as dt
+
+import datetime as dt
+import glob
+import os
+import re
+import statistics as st
+import sys
 
 pat = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d+) .*?Step (\d+):")
+
 
 def windows(path):
     pts = []
@@ -19,8 +26,11 @@ def windows(path):
             t = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
             pts.append((t.timestamp() + int(m.group(2)) / 1000, int(m.group(3))))
     # skip the first point: the interval into it carries dataloader warm-up
-    return [(b1 - b0 and (t1 - t0) / (b1 - b0))
-            for (t0, b0), (t1, b1) in zip(pts[1:], pts[2:])]
+    return [
+        (b1 - b0 and (t1 - t0) / (b1 - b0))
+        for (t0, b0), (t1, b1) in zip(pts[1:], pts[2:])
+    ]
+
 
 rows = {}
 for tag in sorted(os.listdir(f"{sys.argv[1]}/memprobe")):
@@ -33,13 +43,19 @@ tags = sorted({t for v in rows.values() for t in v})
 if not rows:
     sys.exit("no variant has enough step lines yet")
 kw = max(len(k) for k in rows)
-print(f"{'variant':<{kw}} " + " ".join(f"{t+' median':>15}{'max':>8}" for t in tags)
-      + "   ratio(median)")
+print(
+    f"{'variant':<{kw}} "
+    + " ".join(f"{t+' median':>15}{'max':>8}" for t in tags)
+    + "   ratio(median)"
+)
 for k, v in rows.items():
     cells = []
     for t in tags:
-        cells.append(f"{st.median(v[t]):>15.3f}{max(v[t]):>8.2f}" if t in v
-                     else f"{'-':>15}{'-':>8}")
+        cells.append(
+            f"{st.median(v[t]):>15.3f}{max(v[t]):>8.2f}"
+            if t in v
+            else f"{'-':>15}{'-':>8}"
+        )
     r = ""
     if len(tags) == 2 and all(t in v for t in tags):
         r = f"{st.median(v[tags[0]]) / st.median(v[tags[1]]):.3f}"

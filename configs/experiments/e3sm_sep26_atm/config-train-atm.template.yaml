@@ -1,0 +1,475 @@
+# ACE2S atmosphere BASELINE for the 2026-08-31 hackathon (run E01).
+#
+# This file is the campaign baseline, not a maximal config. It is exactly
+#
+#     E01 = aug26.atm.A0_B16_C0_O5_W0_X0.S01
+#
+# in the naming scheme on the hackathon page: no CO2, no aerosol channels,
+# batch 16, equal loss weights, no AMP. Everything else in the run list is
+# generated from this file by make_ablation_config.py, which adds channels and
+# reweights the loss; nothing else about the model is varied. Regenerate the
+# whole campaign with sbatch-scripts/generate-campaign.sh.
+#
+# Baseline provenance (Elynn's piControl configuration, per the "FOR NASER"
+# box on the hackathon page):
+#   embed_dim 384, noise_embed_dim 32, equal loss weighting,
+#   checkpoint_save_epochs / ema_checkpoint_save_epochs every epoch,
+#   wandb 2D image metrics off, 1D logs kept.
+# Do not drift from those five without changing the page first.
+#
+# The raw EAM history files are read directly (no preprocessed zarr), so the
+# three E3SM-vs-FME mismatches are handled by the loader configuration:
+#   1. PRECT/PRECST are renamed to the names the stats use.
+#   2. PRECT/PRECST are in m/s, so they are scaled by the liquid water density
+#      (1000 kg/m3) to kg/m2/s. Without this the moisture budget corrector is
+#      off by 1e3 relative to DTENDTTW and LHFLX.
+#   3. E3SM writes dimensionless ak coefficients, so reference_pressure_name
+#      makes FME compute p = ak * P0 + bk * PS instead of p = ak + bk * PS.
+#
+# Sizing. `batch_size` is global and is split across ranks, and this config is
+# built for local batch 1, so the rank count must equal `batch_size`:
+#
+#     B08 ->  8 ranks = 2 nodes
+#     B16 -> 16 ranks = 4 nodes   <- the baseline
+#     B32 -> 32 ranks = 8 nodes
+#
+#
+# The starts are on a 5-year grid except for 1977 and 2027, which are where 1980
+# and 2030 used to be. This block is weight 1.0, so it *selects the checkpoint*,
+# and the thing that has to be in-sample is the whole 12-year trajectory, not
+# just its first timestep: 1980 ran to 1992 (into the 1990-95 validation split)
+# and 2030 to 2042 (into the held-out test period). 1977 ends 1989 and 2027 ends
+# 2039, both inside their training subsets. check_campaign.py enforces this.
+# The 16 inference initial conditions below divide 8 and 16 but not 32, so the
+# B32 variant needs 32 ICs; make_ablation_config.py rewrites the list rather
+# than leaving it to a dotlist override (which cannot index into a yaml list).
+#
+# Launch. From the repo root, no wrapper needed for a single node:
+#
+#   uv run torchrun --nproc_per_node 4 \
+#     -m fme.ace.train configs/experiments/e3sm_hist_v20260812/config-train-atm.yaml \
+#     --override experiment_dir=$PSCRATCH/fme-output/hist-test
+#
+# and across nodes, from inside an salloc:
+#
+#   srun -N 4 --ntasks-per-node 1 --gpus-per-node 4 uv run --no-sync torchrun \
+#     --nnodes 4 --nproc_per_node 4 \
+#     --rdzv-backend=c10d --rdzv-endpoint="$(hostname):29507" \
+#     -m fme.ace.train configs/experiments/e3sm_hist_v20260812/config-train-atm.yaml \
+#     --override experiment_dir=$PSCRATCH/fme-output/hist-test
+#
+# For the queue, use sbatch-scripts/run-train.sh, which stages and validates the
+# config before it burns an allocation. During the hackathon window also export
+# RESERVATION=_CAP_aigs_hist or the job sits in the regular queue while the 96
+# reserved nodes idle.
+#
+# Do not shrink the validation window much further. With `time_buffer: 10` the
+# loader keeps only every 11th start index, so a split needs roughly
+# `11 * batch_size` timesteps to yield even one batch; at 6-hourly that is
+# ~45 days for batch_size 16. Below that it fails with
+# "No batches in dataloader: 0 samples".
+#
+# See README.md for verified launch recipes and known gotchas, and
+# EXPERIMENTS.md for the campaign design and the readiness assessment.
+# Placeholder. Every launch path overrides it: sbatch-train-*.sh sets
+# experiment_dir=$CAMPAIGN_ROOT/$RUNID via FME_OVERRIDE_ARGS, and the
+# ad-hoc invocations above pass --override themselves. Naming a real
+# directory here would name one person's scratch in all 35 generated
+# configs, which is how runs/ stopped being shareable the first time.
+experiment_dir: OVERRIDE_ME
+save_checkpoint: true
+# Every aggregator's full fields land in experiment_dir as netCDF each
+# epoch. This is the other half of the upload-budget trade below: the
+# maps are kept, they are just kept on disk instead of in W&B.
+save_per_epoch_diagnostics: true
+seed: 1
+validate_using_ema: true
+ema:
+  decay: 0.999
+max_epochs: 30
+# Every epoch, both the training checkpoint (with optimizer state) and the EMA
+# checkpoint (weights only), so a run can be evaluated at any epoch rather than
+# only at the best-validation point. Storage cost is real -- see EXPERIMENTS.md
+# "Checkpoint storage" before raising max_epochs.
+checkpoint_save_epochs:
+  step: 1
+ema_checkpoint_save_epochs:
+  step: 1
+inference:
+  - name: inference
+    weight: 1.0
+    epochs:
+      start: 2
+      step: 3
+    n_forward_steps: 7300
+    forward_steps_in_memory: 20
+    loader:
+      start_indices:
+        times: &train_window_ics
+        - '1940-01-03T12:00:00'
+        - '1945-01-03T12:00:00'
+        - '1950-01-03T12:00:00'
+        - '1955-01-03T12:00:00'
+        - '1960-01-03T12:00:00'
+        - '1965-01-03T12:00:00'
+        - '1970-01-03T12:00:00'
+        - '1975-01-03T12:00:00'
+        - '1977-01-03T12:00:00'
+        - '2000-01-03T12:00:00'
+        - '2005-01-03T12:00:00'
+        - '2010-01-03T12:00:00'
+        - '2015-01-03T12:00:00'
+        - '2020-01-03T12:00:00'
+        - '2025-01-03T12:00:00'
+        - '2027-01-03T12:00:00'
+      dataset: &dataset
+        data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+        file_pattern: &file_pattern v3.LR.historical_0101.aigo.eam.h0.*.nc
+        rename: &rename
+          PRECT: surface_precipitation_rate
+          PRECST: frozen_precipitation_rate
+          co2vmr: global_mean_co2
+        reference_pressure_name: &reference_pressure_name P0
+        overwrite: &overwrite
+          multiply_scalar:
+            surface_precipitation_rate: 1000.0
+            frozen_precipitation_rate: 1000.0
+      num_data_workers: 8
+    # 2D image metrics off, 1D kept (see `aggregator_1d` below for what that
+    # means and how the per-channel plotting is narrowed).
+    aggregator: &inference_aggregator_1d
+      # 1D distribution plots, on the same short reference list as the maps
+      # below -- see UPLOAD BUDGET. A YAML anchor has to be defined before it
+      # is used, and this is the first use in document order.
+       # 1D distribution plots, on the same channel list as the maps below.
+      # A YAML anchor must be defined before use and this is the first use.
+      histogram:
+        enabled: true
+        variables: &plot_vars [PS, TS, LHFLX, SHFLX, surface_precipitation_rate,
+        frozen_precipitation_rate, FLUS, FLUT, FLDS, FSNS, FSUTOA,
+        DTENDTTW, TAUX, TAUY, Qat2m, Uat10m, Vat10m, Tat2m, T_0, T_1, T_4,
+        T_6, T_7, STW_0, STW_1, STW_4, STW_6, STW_7, U_0, U_1, U_4, U_6,
+        U_7, V_0, V_1, V_4, V_6, V_7]
+      zonal_mean:
+        enabled: false         # lat x time image
+      video:
+        enabled: false         # animated maps
+      trend:
+        enabled: false         # per-cell slope maps
+      seasonal:
+        enabled: false         # seasonal-mean maps
+      near_zero_fraction:
+        enabled: false         # maps
+      enso_coefficient:
+        enabled: false         # regression coefficient maps
+      step_diagnostics:
+        correction_scalars: true
+        correction_maps: false
+      # WHAT GETS PLOTTED. One PNG per channel per map metric per block per
+      # epoch is what fills a 100 GB W&B account -- measured 2026-08-30 at 506
+      # images per atmosphere epoch and 484 per ocean epoch. Plotting nearly all
+      # of it is affordable; the interior levels are the part not worth the
+      # bytes, so they are the only thing dropped: index 0 is TOA and 7 the surface, so this keeps the two top and two bottom
+      # levels plus one mid-column reference, and every flux and near-surface
+      # field. 38 of 50 channels.
+      #
+      # `plot_variables` gates IMAGES ONLY. rmse/<var>, bias/<var> and
+      # rmse/channel_mean are still emitted for EVERY channel, so no comparison
+      # loses a number. Everything is on disk regardless --
+      # `save_per_epoch_diagnostics: true` writes each aggregator's full fields
+      # to experiment_dir as netCDF every epoch.
+      time_mean_denorm:
+        plot_variables: *plot_vars
+      time_mean_norm:
+        # target must be written out: dacite builds this field from the yaml
+        # alone, so the dataclass default ("denorm") wins over the
+        # default_factory and the config fails post-init with a UnionMatchError
+        # on `inference` that names neither the field nor the reason.
+        target: norm
+        plot_variables: *plot_vars
+      power_spectrum:
+        plot_variables: *plot_vars
+      # Needs >80 years of rollout; the scored one is 12, so this can never
+      # build -- it only ever logs "metric not supported" four times an epoch.
+      ipo_index:
+        enabled: false
+      # mean/mean_norm, annual and enso_index are 1D, unrestricted and stay on.
+  # Held out: initial conditions and the full 12 year rollout are outside the
+  # training subsets.
+  - name: 5yr_test
+    weight: 0.0
+    epochs:
+      start: 2
+      step: 3
+    n_forward_steps: 7300
+    forward_steps_in_memory: 20
+    loader:
+      start_indices:
+        times: &test_window_ics
+        - '2040-01-03T12:00:00'
+        - '2040-07-03T12:00:00'
+        - '2041-01-03T12:00:00'
+        - '2041-07-03T12:00:00'
+        - '2042-01-03T12:00:00'
+        - '2042-07-03T12:00:00'
+        - '2043-01-03T12:00:00'
+        - '2043-07-03T12:00:00'
+        - '2044-01-03T12:00:00'
+        - '2044-07-03T12:00:00'
+        - '2045-01-03T12:00:00'
+        - '2045-07-03T12:00:00'
+        - '2046-01-03T12:00:00'
+        - '2046-07-03T12:00:00'
+        - '2047-01-03T12:00:00'
+        - '2047-07-03T12:00:00'
+      dataset: *dataset
+      num_data_workers: 8
+    aggregator: *inference_aggregator_1d
+# wandb. Both realms go to ONE project so atmosphere and ocean runs sit in the
+# same workspace and can be filtered by tag rather than compared across projects.
+# `entity` is the team, not the account: `wandb login` prints
+# "Currently logged in as: <username> (<entity>)", so e3sm-ai is the account and
+# e3sm-aig is the entity.
+#
+# Run identity is NOT set here -- WANDB_NAME, WANDB_RUN_GROUP, WANDB_JOB_TYPE,
+# WANDB_TAGS and WANDB_NOTES are read straight from the environment by the wandb
+# library. make_ablation_config.py writes them into runs/<runid>.env and
+# run-train.sh exports them, so an ad-hoc launch of this file lands unnamed.
+logging:
+  log_to_screen: true
+  log_to_wandb: true
+  log_to_file: true
+  project: SamudrACE-E3SMv3
+  entity: e3sm-aig
+train_loader:
+  # Data loading. MEASURED 2026-08-29 on 4 nodes / 16 ranks: the committed
+  # `num_data_workers: 2, prefetch_factor: 1` and the default
+  # `time_buffer_pool_size: 1` ran at 3.16 s/batch effective against a
+  # 0.90 s/batch compute-bound rate -- every 60-120 steps one interval took
+  # 163-216 s while GPU memory sat flat, i.e. the time_buffer window refill was
+  # starving the GPU. These three settings measured 0.925 s/batch over 680 steps
+  # with 500 consecutive clean ones. That is the difference between a 63 h
+  # 30-epoch run and a 216 h one in a 126 h window. Do not lower them without
+  # re-measuring. See EXPERIMENTS.md "Measurements".
+  #
+  # `time_buffer_pool_size: 2` also decorrelates consecutive output batches,
+  # which otherwise all come from the same preloaded window -- a sampling change
+  # as well as a throughput one, applied identically to every run in the
+  # campaign so comparisons stay valid.
+  batch_size: 16
+  num_data_workers: 8
+  time_buffer: 10
+  time_buffer_pool_size: 2
+  prefetch_factor: 4
+  dataset:
+    concat:
+    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+      file_pattern: *file_pattern
+      rename: *rename
+      reference_pressure_name: *reference_pressure_name
+      overwrite: *overwrite
+      subset:
+        start_time: '1940-01-01T06:00:00'
+        stop_time: '1990-01-01T00:00:00'
+    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+      file_pattern: *file_pattern
+      rename: *rename
+      reference_pressure_name: *reference_pressure_name
+      overwrite: *overwrite
+      subset:
+        start_time: '2000-01-01T06:00:00'
+        stop_time: '2040-01-01T00:00:00'
+validation:
+  loader:
+    batch_size: 16
+    num_data_workers: 8
+    time_buffer: 10
+    time_buffer_pool_size: 2
+    prefetch_factor: 4
+    dataset:
+      data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+      file_pattern: *file_pattern
+      rename: *rename
+      reference_pressure_name: *reference_pressure_name
+      overwrite: *overwrite
+      subset:
+        start_time: '1990-01-01T06:00:00'
+        stop_time: '1995-01-01T00:00:00'
+  # 1D logs only: the one-step aggregator's two image metrics are off. Its
+  # scalar mean/mean_norm/power_spectrum/ensemble metrics are unaffected.
+  aggregator:
+    snapshot:
+      enabled: false
+    mean_map:
+      enabled: false
+    # The validation ensemble emits crps / ssr_bias / ensemble_mean_rmse mean
+    # maps for every channel -- 174 PNGs per atmosphere epoch, a third of the
+    # whole upload. The scalars are what the campaign reads.
+    ensemble_denorm:
+      log_mean_maps: false
+optimization:
+  enable_automatic_mixed_precision: false
+  lr: 0.0001
+  optimizer_type: FusedAdam
+  use_gradient_accumulation: true
+  kwargs:
+    weight_decay: 0.01
+stepper_training:
+  n_ensemble: 2
+  n_forward_steps: 1
+  optimize_last_step_only: true
+  loss:
+    type: EnsembleLoss
+    # Equal loss weighting (W0). `weights` defaults to {}, which is uniform; the
+    # W1/W2/W4 variants are written by make_ablation_config.py. Do not add a
+    # weights block here -- the baseline is the unweighted control.
+    kwargs:
+      crps_weight: 0.9
+      energy_score_weight: 0.1
+stepper:
+  step:
+    type: single_module
+    config:
+      residual_prediction: false
+      builder:
+        type: NoiseConditionedSFNO
+        config:
+          embed_dim: 384
+          checkpointing: 3
+          noise_embed_dim: 32
+          noise_type: isotropic
+          filter_type: linear
+          use_mlp: true
+          num_layers: 8
+          operator_type: dhconv
+          separable: false
+          spectral_layers: 3
+          spectral_transform: sht
+          affine_norms: true
+      normalization:
+        network:
+          global_means_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/centering.nc
+          global_stds_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/scaling-full-field.nc
+        residual:
+          global_means_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/centering.nc
+          global_stds_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/scaling-residual.nc
+      ocean:
+        surface_temperature_name: TS
+        ocean_fraction_name: OCNFRAC
+        interpolate: true
+      corrector:
+        conserve_dry_air: true
+        moisture_budget_correction: advection_and_precipitation
+        force_positive_names:
+        - STW_0
+        - STW_1
+        - STW_2
+        - STW_3
+        - STW_4
+        - STW_5
+        - STW_6
+        - STW_7
+        - surface_precipitation_rate
+        - frozen_precipitation_rate
+        - FLUS
+        - FLUT
+        - FLDS
+        - FSNS
+        - FSUTOA
+      next_step_forcing_names:
+      - SOLIN
+      in_names:
+      - LANDFRAC
+      - OCNFRAC
+      - ICEFRAC
+      - PHIS
+      - SOLIN
+      - PS
+      - TS
+      - T_0
+      - T_1
+      - T_2
+      - T_3
+      - T_4
+      - T_5
+      - T_6
+      - T_7
+      - STW_0
+      - STW_1
+      - STW_2
+      - STW_3
+      - STW_4
+      - STW_5
+      - STW_6
+      - STW_7
+      - U_0
+      - U_1
+      - U_2
+      - U_3
+      - U_4
+      - U_5
+      - U_6
+      - U_7
+      - V_0
+      - V_1
+      - V_2
+      - V_3
+      - V_4
+      - V_5
+      - V_6
+      - V_7
+      - Qat2m
+      - Uat10m
+      - Vat10m
+      - Tat2m
+      out_names:
+      - PS
+      - TS
+      - T_0
+      - T_1
+      - T_2
+      - T_3
+      - T_4
+      - T_5
+      - T_6
+      - T_7
+      - STW_0
+      - STW_1
+      - STW_2
+      - STW_3
+      - STW_4
+      - STW_5
+      - STW_6
+      - STW_7
+      - U_0
+      - U_1
+      - U_2
+      - U_3
+      - U_4
+      - U_5
+      - U_6
+      - U_7
+      - V_0
+      - V_1
+      - V_2
+      - V_3
+      - V_4
+      - V_5
+      - V_6
+      - V_7
+      - LHFLX
+      - SHFLX
+      - surface_precipitation_rate
+      - frozen_precipitation_rate
+      - FLUS
+      - FLUT
+      - FLDS
+      - FSNS
+      - FSUTOA
+      - DTENDTTW
+      - TAUX
+      - TAUY
+      - Qat2m
+      - Uat10m
+      - Vat10m
+      - Tat2m

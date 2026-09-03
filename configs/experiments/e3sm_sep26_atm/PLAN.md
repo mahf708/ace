@@ -262,8 +262,17 @@ drops every `EnsembleLoss` kwarg for `MSE`.
 on a GPU node.**
 
 The second one is what makes this a production failure rather than a code
-reading. Running E01's config with `n_ensemble: 1` and nothing else changed, on
-4 GPUs, 2026-09-03:
+reading. Both arms were run: E01's config with `n_ensemble: 1` (E25's case) and
+with `n_ensemble: 3` (E26's case), nothing else changed, on 4 GPUs, on **both**
+card types. All four combinations raise identically and none reaches a single
+training step:
+
+| arm | 40 GB | 80 GB |
+|---|---|---|
+| `n_ensemble: 1` — E25 | `NotImplementedError`, 0 steps | `NotImplementedError`, 0 steps |
+| `n_ensemble: 3` — E26 | `NotImplementedError`, 0 steps | `NotImplementedError`, 0 steps |
+
+The traceback, from the one-member run:
 
     INFO - Number of trainable model parameters: 456223488
     INFO - Starting Training Loop...
