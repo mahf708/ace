@@ -84,14 +84,26 @@ moments, EMA weights) and 4.85 GB is activations per effective batch element at
 `checkpointing: 3`. It is fitted on two aug26 points — 19.0 GB at
 (1, 2, 1) and 28.7 GB at local batch 2 — and it predicts:
 
-| arm | effective batch | predicted GB | 40 GB headroom |
-|---|---|---|---|
-| 1 member, 1 step | 1 | 14.2 | 65% |
-| **2 members, 1 step (REF-S)** | 2 | **19.0** ✓measured | 53% |
-| 3 members, 1 step | 3 | 23.9 | 40% |
-| 2 members, 2 steps, last-step-only | 2 | 19.0 | 53% |
-| 2 members, 2 steps, **both scored** | 4 | 28.7 | 28% |
-| 2 members, 20 steps, last-step-only | 2 | 19.0 | 53% |
+**Superseded by measurement — the model was wrong about rollouts.** Peak MiB on
+the card, from `analysis/card-sweep.sh`, 2026-09-03:
+
+| arm | predicted GB | **measured MiB (40 GB)** | 40 GB headroom | measured s/batch |
+|---|---|---|---|---|
+| 1 member, 1 step | 14.2 | **15,383** | 62% | 0.433 |
+| **2 members, 1 step (REF-S)** | 19.0 | **21,155** | 48% | 0.903 |
+| 3 members, 1 step | 23.9 | **24,651** | 40% | 1.304 |
+| 2 members, 2 steps, **both scored** | 28.7 ✗ | **21,921** | 46% | 1.713 |
+
+**The rollout term does not belong in the memory model.** A both-scored 2-step
+rollout was predicted at 28.7 GB and measures 21.9 — barely above the 1-step
+number. The reason is in the template: `optimization.use_gradient_accumulation:
+true`, so each scored step's backward runs before the next forward and the two
+steps' activations are never held at once. Memory scales with **members only**;
+rollout length costs time, not memory. That also means the sampled-rollout arms
+(`s04`, `s20`) are free on memory however long they get.
+
+So the worst arm in this campaign peaks at **24,651 MiB of 40,960, with 40%
+headroom**, and it is the three-member one rather than the rollout one.
 
 `optimize_last_step_only` runs the unscored steps under `torch.no_grad`
 (`fme/ace/stepper/single_module.py`, `_accumulate_loss`), so a sampled 20-step
@@ -132,13 +144,18 @@ it becomes queue latency against charge and a judgement call.
 Measured 2026-09-03, the identical config on both card types concurrently, so
 the ratio is clean under shared CFS load:
 
-| | peak MiB | median s/batch | worst window |
+| variant | 40 GB s/batch | 80 GB s/batch | ratio |
 |---|---|---|---|
-| A100-40GB (`nid001185`) | 21,155 of 40,960 | **0.903** | 3.73 |
-| A100-80GB (`nid008649`) | 21,151 of 81,920 | **0.826** | 0.91 |
-| ratio | 1.000 | **1.094** | |
+| 2 members, 1 step (REF-S) | 0.903 | 0.826 | **1.094** |
+| 1 member, 1 step | 0.433 | 0.390 | **1.110** |
+| 3 members, 1 step | 1.304 | 1.177 | **1.108** |
+| 2 members, 2 steps both scored | 1.713 | 1.551 | **1.105** |
 
-**9.4% slower. Take the 40 GB pool.** 9.4% more node-hours in exchange for 5.5x
+Peak memory agrees between the cards to within 4 MiB on the reference arm, as
+it should.
+
+**The ratio is 1.094–1.110 across every variant — 9.4 to 11% slower, and
+stable. Take the 40 GB pool.** 9.4% more node-hours in exchange for 5.5x
 the node pool and no reservation dependency is not a close call. The gap being
 far below the 31% bandwidth deficit says this configuration is compute-bound
 rather than bandwidth-bound, which is what `checkpointing: 3` buys — it trades
