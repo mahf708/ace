@@ -136,6 +136,14 @@ BASELINE = {axis: names[0] for axis, names in LEVELS.items()}
 #
 # That makes every last-step-only rollout cheaper than the arithmetic budgeted,
 # and it is the difference between roll-c2 costing 102 h and 94 h.
+#
+# On precision: the three-decimal figures below are good to about +-2%, not to
+# their last digit.  The BASELINE varies 4% between nodes (E01 measured 0.903
+# and 0.868 s/batch on two 40 GB cards), but that variation largely cancels in a
+# same-node ratio -- which is why each rel was computed against its own node's
+# baseline, and why the two card types then agree on every one of them to ~1%
+# (M1 0.480/0.472, M3 1.444/1.425, c2 1.216/1.205, f2 1.897/1.878).  Do not read
+# 0.476 as distinguishable from 0.48; do read it as distinguishable from 0.50.
 REL_MEM = {"1": 0.476, "2": 1.0, "3": 1.435}  # measured; arithmetic said 0.5 / 1.5
 REL_ROLL = {
     "f1": 1.0,

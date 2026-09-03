@@ -1,8 +1,9 @@
 # sep26 — an atmosphere-only ablation campaign
 
-Status: **proposal, awaiting the science design goals.** Nothing in here is
-generated or queued yet. This file is the design argument; once the run list is
-agreed it becomes `EXPERIMENTS.md` and the generator writes `runs/`.
+Status: **built and staged; the run list awaits the science design goals.**
+`runs/` is generated, checked, validated and smoke-tested; nothing is queued.
+This file is the design argument and the measurement record. `README.md` is the
+reference a colleague reads, `AGENTS.md` the history.
 
 Branch: `e3sm/exps/sep26-atm-ablation`, off `e3sm/exps/hist-v2026.8.0`
 (**not** off `main` — see "The unmerged dependency").
@@ -72,20 +73,15 @@ the first thing to check on the schedule.
 biggest structural win available to this campaign.** Numbers below are measured
 on 2026-09-03; see "Measurements".
 
-The atmosphere at production settings — local batch 1, `checkpointing: 3`,
-`embed_dim: 384`, 2 members, 1 forward step — was measured at **19.0 GB/GPU** on
-A100-80GB during aug26. That is 48% of a 40 GB card. The memory model that
-reproduces it:
+The starting point was a model fitted to two aug26 points — 19.0 GB/GPU at
+local batch 1 with 2 members, and 28.7 GB at local batch 2:
 
     per-GPU GB  ~=  9.3  +  4.85 * (local_batch * n_ensemble * n_scored_steps)
 
-where 9.3 GB is fixed state (456 M parameters in fp32, gradients, two FusedAdam
-moments, EMA weights) and 4.85 GB is activations per effective batch element at
-`checkpointing: 3`. It is fitted on two aug26 points — 19.0 GB at
-(1, 2, 1) and 28.7 GB at local batch 2 — and it predicts:
-
-**Superseded by measurement — the model was wrong about rollouts.** Peak MiB on
-the card, from `analysis/card-sweep.sh`, 2026-09-03:
+9.3 GB is fixed state (456 M parameters in fp32, gradients, two FusedAdam
+moments, EMA weights); 4.85 GB is activations per effective batch element at
+`checkpointing: 3`. **It was right about members and wrong about rollouts.**
+Peak MiB measured on the card, `analysis/card-sweep.sh`, 2026-09-03:
 
 | arm | predicted GB | **measured MiB (40 GB)** | 40 GB headroom | measured s/batch |
 |---|---|---|---|---|
@@ -118,12 +114,6 @@ indistinguishable from a real one and reads as a cross-card disagreement.
 Memory is therefore driven by **members**, with a mild rollout-depth term on
 top. The worst arm in this campaign peaks at **24,651 MiB of 40,960, with 40%
 headroom**, and it is the three-member one rather than any rollout one.
-
-`optimize_last_step_only` runs the unscored steps under `torch.no_grad`
-(`fme/ace/stepper/single_module.py`, `_accumulate_loss`), so a sampled 20-step
-rollout costs 20-steps of *time* and 1-step of *memory*. Only `RF2`-style
-both-scored rollouts multiply memory, and even that fits 40 GB at 28%
-headroom.
 
 Host memory is the other axis and it is also fine: `time_buffer: 10` with
 `num_data_workers: 8`, `prefetch_factor: 4` was measured at 19 GB/node for the
@@ -601,6 +591,19 @@ beat one baseline would be reading noise: extra work does not make training
 faster. It also means the prediction that gaussian noise would be *cheaper*
 (one fewer inverse SHT per step) is unconfirmed — the SHT is not a resolvable
 fraction of a step at this precision.
+
+**`ntype-gauss` has a same-node measurement too**: 0.883 against that node's
+0.903 baseline, and 0.871 on the other node — a 1.0% difference, inside the
+floor. Its two measurements span only 1.4%, tighter than the baseline's own
+4.0%, so the arm is if anything better determined than the thing it is compared
+against.
+
+**On the precision of the `rel` table.** The three-decimal figures are good to
+about ±2%, not to their last digit. The baseline varies 4% *between nodes*, but
+that variation largely cancels in a same-node ratio — which is why each `rel`
+was computed against its own node's baseline, and why the two card types then
+agree on every one to ~1% (M1 0.480/0.472, M3 1.444/1.425, `c2` 1.216/1.205,
+`f2` 1.897/1.878). Read 0.476 as distinguishable from 0.50, not from 0.48.
 
 **`fdcrps-3` was measured too, and it is free as well**: 0.878 and 0.880 on the
 two 40 GB nodes, 0.801 on the 80 GB one, against `fdcrps-1`'s 0.870/0.886/0.795.
