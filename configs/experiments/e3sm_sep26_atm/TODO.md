@@ -55,7 +55,13 @@ bars. Worth more than P5 (1,422 node-h) if the choice is forced.
 measured moving 1.00% → 3.18% between adjacent scored epochs. Pool over the last
 *k* scored epochs, or take the max.
 
-### C3. Axes deliberately not run
+### C3. RO04's setup cost is not in the model
+Its 31-timestep windows make dataset setup slower than the 1-step arm's ~22 min,
+and setup is paid on every requeue -- ~10 times over a 114 h run. `FIXED_HOURS`
+is calibrated on the 1-step arm, so RO04 is probably ~117 h. Inside the cost
+model's ~2% precision; a deeper rollout than 20 steps would not be.
+
+### C4. Axes deliberately not run
 `G2` (blocked, B1), `R3` (≤4 sampled — `R4` covers the question), `M2`/`M3`
 under `G0` (blocked, B2), `energy_score_whitening` (untested knob, no level
 defined). Adding any of these is a level, not an axis, so it renames nothing.

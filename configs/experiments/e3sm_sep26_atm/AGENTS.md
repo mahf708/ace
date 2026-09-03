@@ -154,6 +154,23 @@ bimodal rather than noisy. Over a 70-batch probe exactly one such stall lands in
 one run and not the other. `analysis/steprate.py` reports the median of the
 per-window rates with the max beside it, so the stall stays visible.
 
+### Smoke tests of the new arms
+
+Real forward and backward on 4 GPUs, from the generated configs: **OI01**
+(0.5/0.5 split) and **NC02** (noise dim 64) reach logged training steps cleanly.
+**CU01** cannot be smoke-tested until RF02 produces a checkpoint. **RO04**
+(sampled to 20 steps) needed a second attempt: its 31-timestep windows take
+longer to build than the 15 min the harness allowed, so the first run reported
+zero steps with no error -- the same shape as the sweep's 20-step variant.
+
+That setup cost is worth carrying into the budget rather than the harness. A
+21-timestep window plus `time_buffer: 10` is ~31 timesteps against the 1-step
+arm's 12, and dataset setup is **paid again on every requeue** -- roughly ten
+times over a 114 h run at a 12 h walltime. `FIXED_HOURS = 17` is calibrated on
+the 1-step arm; RO04 is probably nearer 117 h than 114. That is inside the cost
+model's ~2% precision, so the number stands, but a deeper rollout would not.
+
+
 ### Two arms cannot train, and both passed `validate_config`
 
 **1. `mem-1` and `mem-3` under any energy-score weight.** `get_energy_score`
