@@ -258,7 +258,33 @@ drops every `EnsembleLoss` kwarg for `MSE`.
 
 ## 4. BLOCKER: two aug26 runs cannot train, and it constrains this campaign too
 
-**Verified today, empirically, not read off the source.**
+**Verified today twice over: by direct call, and then in the real training path
+on a GPU node.**
+
+The second one is what makes this a production failure rather than a code
+reading. Running E01's config with `n_ensemble: 1` and nothing else changed, on
+4 GPUs, 2026-09-03:
+
+    INFO - Number of trainable model parameters: 456223488
+    INFO - Starting Training Loop...
+    [rank0]   fme/core/loss.py:907  in forward
+    [rank0]   fme/core/loss.py:255  in __call__
+    [rank0]   fme/core/loss.py:452  in forward
+    [rank0]   fme/core/loss.py:767  in forward      <- EnsembleLoss
+    [rank0]   fme/core/loss.py:628  in forward      <- EnergyScoreLoss
+    [rank0]   fme/core/ensemble.py:81 in get_energy_score
+    [rank0]     raise NotImplementedError(
+    [rank0] NotImplementedError: Energy score is written here specifically for
+            2 ensemble members, got 1 ensemble members.
+
+Note where it dies: **after** config validation, **after** dataset
+construction, **after** the model is built and its parameter count logged, on
+the first batch of the training loop. So `fme.ace.validate_config` cannot catch
+it, and neither can anything else that stops short of a real forward pass. In
+production that is a run which claims 4 nodes, pays the full ~22 min dataset
+setup, and dies at step 1 — twice over, for E25 and E26.
+
+The direct-call probe, for the record:
 
 `fme/core/ensemble.py:80` opens `get_energy_score` with
 `if gen.shape[1] != 2: raise NotImplementedError`. `EnergyScoreLoss.forward`
