@@ -630,6 +630,26 @@ def build(baseline: dict, run: Run) -> dict:
     return config
 
 
+def parent_runid(
+    exp_id: str, seed: int, runlist: list[Experiment] | None = None
+) -> str:
+    """Resolve a warm-start parent from an experiment id to a full run id.
+
+    The run list names a parent by experiment id (RF02) because that is what a
+    human writing an arm knows.  run-train.sh resolves
+    $CAMPAIGN_ROOT/<parent>/training_checkpoints/, which is keyed by RUN id, so
+    the .env has to carry the full one -- otherwise the resolution points at a
+    directory that never exists and the arm fails closed forever.
+
+    A parent with several seeds contributes the matching seed where it has one,
+    and its first otherwise, so a seeded curriculum stays paired.
+    """
+    for e in runlist if runlist is not None else RUNLIST:
+        if e.exp == exp_id:
+            return Run(e, seed if seed in e.seeds else e.seeds[0]).runid
+    return exp_id  # expand() rejects an unknown parent before this matters
+
+
 def env_file(run: Run) -> str:
     """W&B provenance, read from the environment by wandb rather than the yaml.
 
@@ -655,7 +675,7 @@ def env_file(run: Run) -> str:
         tags.append("degenerate-by-design")
     warm = (
         [
-            f"FME_WARM_START_FROM={e.warm_start_from}",
+            f"FME_WARM_START_FROM={parent_runid(e.warm_start_from, run.seed)}",
             f"FME_WARM_START_CKPT={WARM_START_CKPT}",
         ]
         if e.warm_start_from

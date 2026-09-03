@@ -197,6 +197,22 @@ def test_warm_start_needs_a_parent_and_a_parent_needs_a_warm_start():
     assert any("with I0" in c for c in mk.validate(mk.Run(unused, 1)))
 
 
+def test_warm_start_resolves_to_a_full_run_id_not_an_experiment_id():
+    """run-train.sh resolves $CAMPAIGN_ROOT/<parent>/, which is keyed by RUN id.
+
+    An experiment id there points at a directory that never exists, so the arm
+    fails closed forever instead of only until its parent finishes.
+    """
+    cu = next(e for e in mk.RUNLIST if e.exp == "CU01")
+    env = mk.env_file(mk.Run(cu, seed=1))
+    line = next(x for x in env.splitlines() if x.startswith("FME_WARM_START_FROM="))
+    parent = line.split("=", 1)[1]
+    assert parent != "RF02"
+    assert parent.startswith("RF02.sep26.atm.") and parent.endswith(".S01")
+    # ...and it is a run the campaign actually generates.
+    assert parent in {r.runid for r in mk.expand(mk.RUNLIST)}
+
+
 def test_warm_start_parent_must_be_in_the_run_list():
     bogus = [mk.Experiment("CU01", mk.Word.of(I="1"), "t", warm_start_from="ZZ99")]
     with pytest.raises(mk.ConfigError, match="not in the run list"):
