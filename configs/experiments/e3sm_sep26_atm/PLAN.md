@@ -602,6 +602,17 @@ faster. It also means the prediction that gaussian noise would be *cheaper*
 (one fewer inverse SHT per step) is unconfirmed — the SHT is not a resolvable
 fraction of a step at this precision.
 
+**`fdcrps-3` was measured too, and it is free as well**: 0.878 and 0.880 on the
+two 40 GB nodes, 0.801 on the 80 GB one, against `fdcrps-1`'s 0.870/0.886/0.795.
+So *three* coarsening levels cost no more than one, and neither costs more than
+none. The finite-difference CRPS axis is free at every level this campaign
+defines, which removes the cost argument for keeping `fdcrps-3` out of the run
+list — if it is excluded it should be on scientific grounds, not budgetary
+ones. (`FiniteDifferenceCRPSLoss` recurses on `avg_pool2d` coarsenings, each a
+quarter the size of the last, so the added work is a geometric series against a
+456 M-parameter SFNO forward. Cheap is the expected answer; it is now the
+measured one.)
+
 Two of these are more interesting than the plan being replaced credits:
 
 * **`crps-energy` (crps 0.0 / energy 1.0) was scoped *out*, and it should be
@@ -844,7 +855,11 @@ instead of failing the job.
 * **`energy_score_whitening`** (`SpectralWhitening`, `eps_frac`, `exponent`) —
   a further untested knob, one run, and a refinement of an axis this campaign
   only establishes.
-* **`crps-half`, `fdcrps-3`, `noise-64`** — one run each, same reason.
+* **`crps-half`, `noise-64`** — one run each, same reason.
+* **`fdcrps-3`** — same, but note the cost argument is gone: it was measured at
+  the same step time as `fdcrps-1` and as the baseline, so excluding it is a
+  scientific choice about how many levels of pooling are worth a run, not a
+  budgetary one.
 * **The ocean, and anything coupled.** This campaign is atmosphere-only by
   construction. Samudra takes no noise input and its loss is plain MSE, so none
   of these axes mean anything there. (Note the coupled config's `n_ensemble: 2`
