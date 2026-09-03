@@ -141,10 +141,16 @@ REL_ROLL = {
     "f1": 1.0,
     "c2": 1.21,  # measured; arithmetic said 1.33
     "f2": 1.89,  # measured; arithmetic said 2.00
-    # Derived from the measured forward/step ratio rather than measured
-    # directly: one scored step plus (E[steps] - 1) no_grad forwards.
-    "s04": 1.13,  # E[steps] 1.6; arithmetic said 1.20
-    "s20": 1.42,  # E[steps] 3.0; arithmetic said 1.67
+    # Not measured directly.  The 1->2 step slope (0.195 s per extra no_grad
+    # forward) UNDER-predicts at depth: a fixed 20-step rollout was measured at
+    # 5.355 s/batch against a linear 4.608, so the per-forward cost grows with
+    # rollout length.  Fitting through the two extreme measured points
+    # (1 step 0.903 s, 20 steps 5.355 s) gives 0.234 s per extra forward, which
+    # reproduces the measured 2-step point to 3.5%.  The sampled schedules are
+    # then the probability-weighted sum over that curve, which is what the
+    # arithmetic version of this table got wrong in both directions.
+    "s04": 1.21,  # {1:.6, 2:.2, 4:.2};              arithmetic said 1.20
+    "s20": 1.52,  # {1:.6, 2:.2, 4:.1, 12:.05, 20:.05}; arithmetic said 1.67
 }
 # Per-level multipliers for axes whose cost is not captured above.  Anything
 # absent is 1.0.  fdcrps and ntype are still arithmetic; the sweep variants that

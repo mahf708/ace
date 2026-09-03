@@ -94,16 +94,17 @@ the card, from `analysis/card-sweep.sh`, 2026-09-03:
 | 3 members, 1 step | 23.9 | **24,651** | 40% | 1.304 |
 | 2 members, 2 steps, **both scored** | 28.7 ✗ | **21,921** | 46% | 1.713 |
 
-**The rollout term does not belong in the memory model.** A both-scored 2-step
-rollout was predicted at 28.7 GB and measures 21.9 — barely above the 1-step
-number. The reason is in the template: `optimization.use_gradient_accumulation:
-true`, so each scored step's backward runs before the next forward and the two
-steps' activations are never held at once. Memory scales with **members only**;
-rollout length costs time, not memory. That also means the sampled-rollout arms
-(`s04`, `s20`) are free on memory however long they get.
+**The rollout term is far smaller than the model said, but it is not zero.** A
+both-scored 2-step rollout was predicted at 28.7 GB and measures 21.9 — barely
+above the 1-step number, because `optimization.use_gradient_accumulation: true`
+runs each scored step's backward before the next forward, so the two steps'
+activations are never held at once. A *fixed 20-step* last-step-only rollout
+measures **23,233 MiB**, about 2 GB above the 1-step arm — so depth does cost
+something, just sub-linearly and far less than the number of steps.
 
-So the worst arm in this campaign peaks at **24,651 MiB of 40,960, with 40%
-headroom**, and it is the three-member one rather than the rollout one.
+Memory is therefore driven by **members**, with a mild rollout-depth term on
+top. The worst arm in this campaign peaks at **24,651 MiB of 40,960, with 40%
+headroom**, and it is the three-member one rather than any rollout one.
 
 `optimize_last_step_only` runs the unscored steps under `torch.no_grad`
 (`fme/ace/stepper/single_module.py`, `_accumulate_loss`), so a sampled 20-step
