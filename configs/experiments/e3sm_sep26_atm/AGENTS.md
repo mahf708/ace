@@ -66,9 +66,31 @@ length costs time. The sampled-rollout arms are therefore free on memory however
 long they get, and the worst arm in the campaign is the three-member one at 40%
 headroom rather than the rollout one.
 
-**The `rel` cost model is confirmed to 4–6%:** measured 0.480 against 0.50 for
-one member, 1.444 against 1.50 for three, 1.897 against 2.00 for the both-scored
-rollout.
+**The `rel` cost model was then measured outright**, and the sweep finished
+2026-09-03 with every axis in the run list covered:
+
+| variant | 40 GB s/batch | rel | in the generator |
+|---|---|---|---|
+| E01 baseline, 2 members 1 step | 0.903 (0.868 on a second node) | 1.000 | — |
+| 1 member, pure CRPS | 0.433 | 0.480 | `REL_MEM["1"] = 0.476` |
+| 1 member, MSE, no noise | 0.418 | 0.463 | *(same entry)* |
+| 3 members, pure CRPS | 1.304 | 1.444 | `REL_MEM["3"] = 1.435` |
+| 2 steps, last-step-only | 1.098 | 1.216 | `REL_ROLL["c2"] = 1.21` |
+| 2 steps, both scored | 1.713 | 1.897 | `REL_ROLL["f2"] = 1.89` |
+| 20 steps, last-step-only | 5.355 | 5.930 | *(fits the sampled schedules)* |
+| `fdcrps-1` / `fdcrps-3` / `ntype-gauss` | 0.870–0.886 | 1.00 | no entry — below the floor |
+
+The MSE pole at one member (0.463) is 3.5% under the pure-CRPS arm at one member
+(0.480), which is at the edge of what this probe resolves and points the way two
+independent simplifications would: MSE has no pairwise term, and `noise-0` drops
+the noise draw and the conditional layer-norm work. `REL_MEM["1"] = 0.476` covers
+both within resolution, so the generator keeps one entry rather than splitting it
+on a 3.5% difference it cannot defend.
+
+**On precision:** these are good to about ±2%. The baseline varies 4% *between*
+nodes, but that cancels in a same-node ratio, which is why each `rel` was taken
+against its own node's baseline and why the two card types then agree on every
+one to ~1%.
 
 **The step-time measurement nearly went wrong.** The first pass gave a 1.72x
 card ratio — impossible for two parts differing only in memory bandwidth, which
