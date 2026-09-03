@@ -153,8 +153,16 @@ REL_ROLL = {
     "s20": 1.52,  # {1:.6, 2:.2, 4:.1, 12:.05, 20:.05}; arithmetic said 1.67
 }
 # Per-level multipliers for axes whose cost is not captured above.  Anything
-# absent is 1.0.  fdcrps and ntype are still arithmetic; the sweep variants that
-# settle them were queued behind the rollout arms.
+# absent is 1.0.
+#
+# fdcrps-1 and ntype-gauss were both measured and both come out at 1.0 within
+# the probe's noise floor, so neither gets an entry.  The floor is the point:
+# the E01 baseline itself measured 0.903 and 0.868 s/batch on two 40 GB nodes,
+# a 4.0% spread on an identical config, while fdcrps-1 came in at 0.870/0.886
+# and ntype-gauss at 0.871.  Every difference is inside the baseline's own
+# variation, so this probe -- medians over ~5 windows of 10 batches -- cannot
+# resolve them.  Quoting 0.96 for fdcrps because one run was faster than one
+# baseline would be reading noise; extra work does not make training faster.
 REL_EXTRA: dict[tuple[str, str], float] = {}
 
 
@@ -652,7 +660,7 @@ def report(runs: list[Run]) -> None:
     )
     print(
         "member and rollout costs are measured (analysis/card-sweep.sh, "
-        "2026-09-03); fdcrps and ntype are still assumed at 1.0"
+        "2026-09-03); fdcrps and ntype measured at 1.0 within a 4% floor"
     )
 
 

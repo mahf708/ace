@@ -567,13 +567,27 @@ members.
 
 | id | rel | run h | node-h | isolates |
 |---|---|---|---|---|
-| `crps-pure` | 1.00 | 81 | 324 | *(shared with Tier 1)* what the 0.1 energy term buys |
-| `crps-energy` | 1.00 | 81 | 324 | the **spectral-space** objective alone |
-| `fdcrps-1` | ~1.05 | ~84 | ~336 | spatially pooled CRPS as a training objective |
-| `alpha-095` | 1.00 | 81 | 324 | almost-fair CRPS |
-| `ntype-gauss` | ≤1.00 | ≤81 | ≤324 | the noise's **spatial correlation** |
+| `crps-pure` | 1.00 | 81 | 322 | *(shared with Tier 1)* what the 0.1 energy term buys |
+| ~~`crps-energy`~~ | — | — | — | **blocked** — see §4; it cannot train |
+| `fdcrps-1` | **1.00** ✓measured | 81 | 322 | spatially pooled CRPS as a training objective |
+| `alpha-095` | 1.00 | 81 | 322 | almost-fair CRPS |
+| `ntype-gauss` | **1.00** ✓measured | 81 | 322 | the noise's **spatial correlation** |
 
-4 new runs: **~1,308 node-hours.**
+3 new runs: **~966 node-hours**, with `crps-energy` blocked.
+
+**`fdcrps-1` and `ntype-gauss` both cost nothing measurable, and the noise floor
+is the finding.** Guessed at ~1.05 and ≤1.00 respectively; measured at 0.870 and
+0.886 (`fdcrps-1`, two nodes) and 0.871 (`ntype-gauss`) — against an **E01
+baseline that itself measured 0.903 and 0.868 on two 40 GB nodes**, a 4.0%
+spread on an identical config. Every difference is inside the baseline's own
+variation.
+
+So this probe — medians over ~5 windows of 10 batches — resolves nothing below
+~4%, and both axes are 1.00 ± 0.04. Reading `fdcrps-1` as 0.96 because one run
+beat one baseline would be reading noise: extra work does not make training
+faster. It also means the prediction that gaussian noise would be *cheaper*
+(one fewer inverse SHT per step) is unconfirmed — the SHT is not a resolvable
+fraction of a step at this precision.
 
 Two of these are more interesting than the plan being replaced credits:
 
