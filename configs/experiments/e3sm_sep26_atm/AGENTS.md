@@ -158,10 +158,12 @@ per-window rates with the max beside it, so the stall stays visible.
 
 Real forward and backward on 4 GPUs, from the generated configs: **OI01**
 (0.5/0.5 split) and **NC02** (noise dim 64) reach logged training steps cleanly.
-**CU01** cannot be smoke-tested until RF02 produces a checkpoint. **RO04**
-(sampled to 20 steps) needed a second attempt: its 31-timestep windows take
-longer to build than the 15 min the harness allowed, so the first run reported
-zero steps with no error -- the same shape as the sweep's 20-step variant.
+**RO04** (sampled to 20 steps) passes too, on a second attempt: its 31-timestep
+windows take longer to build than the 15 min the harness first allowed, so the
+initial run reported zero steps with no error -- the same shape as the sweep's
+20-step variant, and the same cause. At a 45 min deadline it reaches steps
+cleanly. **CU01** cannot be smoke-tested until RF02 produces a checkpoint; it is
+the only unverified arm.
 
 That setup cost is worth carrying into the budget rather than the harness. A
 21-timestep window plus `time_buffer: 10` is ~31 timesteps against the 1-step
