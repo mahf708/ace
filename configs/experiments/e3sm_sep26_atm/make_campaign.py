@@ -106,7 +106,8 @@ NOISE: dict[str, int] = {"0": 0, "32": 32, "64": 64}
 NTYPE: dict[str, str] = {"iso": "isotropic", "gauss": "gaussian"}
 # (n_forward_steps, optimize_last_step_only).  optimize_last_step_only runs the
 # unscored steps under torch.no_grad, so an n-step sample costs (n-1) forwards
-# plus one forward+backward, and a forward is ~1/3 of a step.
+# plus one forward+backward.  Measured, that forward is 0.24 of a scored step;
+# see REL_ROLL below.
 ROLL: dict[str, tuple[object, bool]] = {
     "f1": (1, True),
     "c2": (2, True),
@@ -122,13 +123,32 @@ ALPHA: dict[str, float] = {"100": 1.0, "095": 0.95}
 
 BASELINE = {axis: names[0] for axis, names in LEVELS.items()}
 
-# Relative training cost per level, against the template.  Members multiply
-# everything because broadcast_ensemble folds them into the batch; rollouts cost
-# their expected number of forward-equivalents.
-REL_MEM = {"1": 0.5, "2": 1.0, "3": 1.5}
-REL_ROLL = {"f1": 1.0, "c2": 1.33, "f2": 2.0, "s04": 1.20, "s20": 1.67}
-# Measured additions, filled in from analysis/card-sweep.sh.  Anything absent is
-# 1.0 and is arithmetic rather than measurement -- say so in the run notes.
+# Relative training cost per level, against the template.  MEASURED 2026-09-03
+# by analysis/card-sweep.sh, not assumed: the two card types agree on every
+# figure below to within 2%, which is the check that these are properties of the
+# model rather than of the node.
+#
+# Fitting  batch_time = fixed + n_scored * step + n_unscored * forward  to the
+# sweep gives, on the 40 GB card, fixed = 0.093 s, a scored step of 0.810 s and
+# a no_grad forward of 0.195 s -- so
+#
+#     a no_grad forward is 0.24 of a scored step, not the 1/3 aug26 assumed.
+#
+# That makes every last-step-only rollout cheaper than the arithmetic budgeted,
+# and it is the difference between roll-c2 costing 102 h and 94 h.
+REL_MEM = {"1": 0.476, "2": 1.0, "3": 1.435}  # measured; arithmetic said 0.5 / 1.5
+REL_ROLL = {
+    "f1": 1.0,
+    "c2": 1.21,  # measured; arithmetic said 1.33
+    "f2": 1.89,  # measured; arithmetic said 2.00
+    # Derived from the measured forward/step ratio rather than measured
+    # directly: one scored step plus (E[steps] - 1) no_grad forwards.
+    "s04": 1.13,  # E[steps] 1.6; arithmetic said 1.20
+    "s20": 1.42,  # E[steps] 3.0; arithmetic said 1.67
+}
+# Per-level multipliers for axes whose cost is not captured above.  Anything
+# absent is 1.0.  fdcrps and ntype are still arithmetic; the sweep variants that
+# settle them were queued behind the rollout arms.
 REL_EXTRA: dict[tuple[str, str], float] = {}
 
 
@@ -624,12 +644,10 @@ def report(runs: list[Run]) -> None:
         "references are aug26 E01 (stochastic pole) and E21 (deterministic "
         "pole), 3 seeds each, not re-run here"
     )
-    est = [r for r in runs if not any((k, v) in REL_EXTRA for k, v in r.delta.levels)]
-    if est:
-        print(
-            f"note: {len(est)} of {len(runs)} runs cost `rel` by arithmetic "
-            f"rather than measurement; analysis/card-sweep.sh fills REL_EXTRA"
-        )
+    print(
+        "member and rollout costs are measured (analysis/card-sweep.sh, "
+        "2026-09-03); fdcrps and ntype are still assumed at 1.0"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

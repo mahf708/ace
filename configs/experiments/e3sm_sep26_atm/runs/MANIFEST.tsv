@@ -1,10 +1,10 @@
 runid	label	delta	seed	priority	epochs	nodes	rel	run_hours	note
-sep26.atm.mem-1_obj-mse.s01	M01	mem-1_obj-mse	01	10	30	4	0.50	49	noise conditioning under MSE; the D1/Z32 cell of the mechanism square
-sep26.atm.crps-pure_mem-1_noise-0.s01	M02	crps-pure_mem-1_noise-0	01	9	30	4	0.50	49	loss geometry with no noise on either side; MAE against REF-D's MSE
-sep26.atm.crps-pure_mem-1.s01	M03	crps-pure_mem-1	01	9	30	4	0.50	49	noise conditioning under MAE; also M1 of the pure-CRPS member sweep
+sep26.atm.mem-1_obj-mse.s01	M01	mem-1_obj-mse	01	10	30	4	0.48	47	noise conditioning under MSE; the D1/Z32 cell of the mechanism square
+sep26.atm.crps-pure_mem-1_noise-0.s01	M02	crps-pure_mem-1_noise-0	01	9	30	4	0.48	47	loss geometry with no noise on either side; MAE against REF-D's MSE
+sep26.atm.crps-pure_mem-1.s01	M03	crps-pure_mem-1	01	9	30	4	0.48	47	noise conditioning under MAE; also M1 of the pure-CRPS member sweep
 sep26.atm.crps-pure.s01	M04	crps-pure	01	9	30	4	1.00	81	pure CRPS at two members; what the 0.1 energy-score term buys, and M2 of the member sweep
-sep26.atm.crps-pure_mem-3.s01	M05	crps-pure_mem-3	01	10	30	4	1.50	112	three members on a pure-CRPS objective; the runnable replacement for aug26 E26
+sep26.atm.crps-pure_mem-3.s01	M05	crps-pure_mem-3	01	10	30	4	1.44	108	three members on a pure-CRPS objective; the runnable replacement for aug26 E26
 sep26.atm.fdcrps-1.s01	L02	fdcrps-1	01	9	30	4	1.00	81	spatially pooled CRPS as a training objective (Alet et al. 2025), one coarsening level
 sep26.atm.alpha-095.s01	L03	alpha-095	01	11	30	4	1.00	81	almost-fair CRPS; at two members the pairwise term is a single pair, which is where this is supposed to pay
 sep26.atm.ntype-gauss.s01	N01	ntype-gauss	01	9	30	4	1.00	81	the noise's spatial correlation: i.i.d. per grid point against isotropic drawn in spherical-harmonic space
-sep26.atm.roll-c2.s01	R01	roll-c2	01	11	30	4	1.33	102	two forward steps, one scored; with REF-S (1 step) and aug26 E18 (2 steps, both scored) the two moves separate
+sep26.atm.roll-c2.s01	R01	roll-c2	01	11	30	4	1.21	94	two forward steps, one scored; with REF-S (1 step) and aug26 E18 (2 steps, both scored) the two moves separate
