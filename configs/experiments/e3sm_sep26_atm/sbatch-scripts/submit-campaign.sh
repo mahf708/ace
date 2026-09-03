@@ -3,14 +3,16 @@
 #
 #     ./submit-campaign.sh --dry-run              # print what would be queued
 #     ./submit-campaign.sh --preflight            # stage + validate, queue nothing
-#     ./submit-campaign.sh                        # queue P1..P9
-#     ./submit-campaign.sh --max-priority 11      # ...including the tail
-#     ./submit-campaign.sh --only M04             # one experiment, by label
+#     ./submit-campaign.sh                        # queue P1..P3
+#     ./submit-campaign.sh --max-priority 5       # ...including the tail
+#     ./submit-campaign.sh --only LG01            # one experiment, by id
 #
-# Priorities here are 9..11 rather than 1..8, and the default cap is 9, so an
-# aug26 submission cannot release these and a sep26 submission releases only the
-# arms that carry the campaign's claims. The tail (P10, P11) is the part that
-# would be dropped first if the charge budget bites -- see PLAN.md section 5.
+# Priorities are 1..5 and the default cap is 3. P1 is the deterministic
+# reference, which five arms difference against and which therefore has to
+# finish first; P2 is the mechanism block; P3 the single-factor arms that carry
+# the remaining claims. P4 and P5 are the tail, dropped first if the charge
+# budget bites. sep26 has its own directory and its own submit script, so there
+# is no shared priority space with aug26 to defend against.
 #
 # Reads MANIFEST.tsv, which generate-campaign.sh writes. Every column it uses is
 # named in the header, so a column added to the manifest does not shift this
@@ -35,16 +37,16 @@ RUN="$HERE/run-train.sh"
 DRY=0
 PRE=0
 ONLY=""
-MAXP=9
+MAXP=3
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)      DRY=1; shift ;;
         --preflight)    PRE=1; shift ;;
-        --only)         ONLY="${2:?--only needs an experiment label or run id}"; shift 2 ;;
+        --only)         ONLY="${2:?--only needs an experiment id or run id}"; shift 2 ;;
         --max-priority) MAXP="${2:?--max-priority needs a number}"; shift 2 ;;
-        *) echo "usage: $0 [--dry-run|--preflight] [--only LABEL] [--max-priority N]" >&2
-           echo "       N is 9 for the arms that carry the claims, 10..11 for the tail" >&2
+        *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N]" >&2
+           echo "       N is 1..3 for the arms that carry the claims, 4..5 for the tail" >&2
            exit 2 ;;
     esac
 done
@@ -57,7 +59,7 @@ done
 # would break the moment one is added.
 header=$(head -1 "$MANIFEST")
 col() { awk -v want="$1" -F'\t' 'NR==1{for(i=1;i<=NF;i++) if($i==want){print i; exit}}' "$MANIFEST"; }
-C_ID=$(col runid); C_LABEL=$(col label); C_PRI=$(col priority)
+C_ID=$(col runid); C_LABEL=$(col exp); C_PRI=$(col priority)
 C_NODES=$(col nodes); C_HOURS=$(col run_hours); C_NOTE=$(col note)
 for c in "$C_ID" "$C_LABEL" "$C_PRI" "$C_NODES"; do
     [ -n "$c" ] || { echo "MANIFEST.tsv is missing a required column: $header" >&2; exit 1; }

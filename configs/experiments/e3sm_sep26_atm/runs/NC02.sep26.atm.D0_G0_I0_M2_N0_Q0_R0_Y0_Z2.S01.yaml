@@ -149,7 +149,7 @@ logging:
   log_to_screen: true
   log_to_wandb: true
   log_to_file: true
-  project: SamudrACE-E3SMv3
+  project: ACE2S-sep26-atm
   entity: e3sm-aig
 train_loader:
   batch_size: 16
@@ -206,11 +206,14 @@ optimization:
   kwargs:
     weight_decay: 0.01
 stepper_training:
-  n_ensemble: 1
+  n_ensemble: 2
   n_forward_steps: 1
   optimize_last_step_only: true
   loss:
-    type: MSE
+    type: EnsembleLoss
+    kwargs:
+      crps_weight: 0.9
+      energy_score_weight: 0.1
 stepper:
   step:
     type: single_module
@@ -221,7 +224,7 @@ stepper:
         config:
           embed_dim: 384
           checkpointing: 3
-          noise_embed_dim: 32
+          noise_embed_dim: 64
           noise_type: isotropic
           filter_type: linear
           use_mlp: true

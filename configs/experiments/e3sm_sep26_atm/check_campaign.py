@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assert that every generated run config agrees with its own run id.
 
-    ./check_campaign.py               # checks runs/
+    ./check_campaign.py               # checks runs/, and the RF01 claim
     ./check_campaign.py --dir DIR
 
 The tables below **duplicate** make_campaign.py's on purpose, and must keep
@@ -12,122 +12,130 @@ this file exists for.
 
 What it does not do is prove a config *runs*.  aug26's checker passed E25 and
 E26, which raise on their first training batch, because it verified that a
-config agreed with its id and nothing more.  The member/energy-score rule below
-is the specific lesson from that, but the general point stands: a real forward
-and backward pass is the only thing that proves a config trains.
+config agreed with its id and nothing more.  The two blocker rules below are the
+specific lessons; the general point stands: only a real forward and backward
+pass proves a config trains.
 """
 
 import argparse
 import pathlib
 import sys
+from collections.abc import Mapping
 
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
 CAMPAIGN = "sep26"
 REALM = "atm"
+BATCH = 16
 LOCAL_BATCH = 1
 GPUS_PER_NODE = 4
 INFERENCE_EVALUATIONS = 10
 INFERENCE_YEARS = 5
 STEPS_PER_YEAR = 1460
 
+# The stochastic pole is not generated here -- it is aug26's E01, already
+# trained at three seeds.  That claim is only safe while the template still
+# matches that config, so it is checked rather than asserted in prose.
+AUG26_BASELINE = HERE.parent / "e3sm_hist_v20260812" / "config-train-atm.yaml"
+RF01_WORD = "D0_G0_I0_M2_N0_Q0_R0_Y0_Z1"
+
 # --- duplicated from make_campaign.py, deliberately -------------------------
+POSITIONS = ("D", "G", "I", "M", "N", "Q", "R", "Y", "Z")
 BASELINE = {
-    "obj": "crps",
-    "crps": "std",
-    "mem": "2",
-    "noise": "32",
-    "ntype": "iso",
-    "roll": "f1",
-    "fdcrps": "0",
-    "alpha": "100",
+    "D": "0",
+    "G": "0",
+    "I": "0",
+    "M": "2",
+    "N": "0",
+    "Q": "0",
+    "R": "0",
+    "Y": "0",
+    "Z": "1",
 }
-LOSS_TYPE = {"crps": "EnsembleLoss", "mse": "MSE"}
-CRPS_WEIGHTS = {
-    "std": (0.9, 0.1),
-    "pure": (1.0, 0.0),
-    "energy": (0.0, 1.0),
-    "half": (0.5, 0.5),
-}
+OBJECTIVE = {"0": "EnsembleLoss", "1": "MSE"}
+SPLIT = {"0": (0.9, 0.1), "1": (1.0, 0.0), "2": (0.0, 1.0), "3": (0.5, 0.5)}
+INIT = {"0": "scratch", "1": "warm"}
 MEMBERS = {"1": 1, "2": 2, "3": 3}
-NOISE = {"0": 0, "32": 32, "64": 64}
-NTYPE = {"iso": "isotropic", "gauss": "gaussian"}
-ROLL = {
-    "f1": (1, True),
-    "c2": (2, True),
-    "f2": (2, False),
-    "s04": ({1: 0.6, 2: 0.2, 4: 0.2}, True),
-    "s20": ({1: 0.6, 2: 0.2, 4: 0.1, 12: 0.05, 20: 0.05}, True),
-}
+NOISE_TYPE = {"0": "isotropic", "1": "gaussian"}
 FDCRPS = {"0": 0, "1": 1, "3": 3}
-ALPHA = {"100": 1.0, "095": 0.95}
+FDCRPS_WEIGHT = 0.1
+ROLLOUT: dict[str, tuple[int | dict[int, float], bool]] = {
+    "0": (1, True),
+    "1": (2, True),
+    "2": (2, False),
+    "3": ({1: 0.6, 2: 0.2, 4: 0.2}, True),
+    "4": ({1: 0.6, 2: 0.2, 4: 0.1, 12: 0.05, 20: 0.05}, True),
+}
+ALPHA = {"0": 1.0, "1": 0.95}
+NOISE_DIM = {"0": 0, "1": 32, "2": 64}
+LEVELS: dict[str, Mapping[str, object]] = {
+    "D": OBJECTIVE,
+    "G": SPLIT,
+    "I": INIT,
+    "M": MEMBERS,
+    "N": NOISE_TYPE,
+    "Q": FDCRPS,
+    "R": ROLLOUT,
+    "Y": ALPHA,
+    "Z": NOISE_DIM,
+}
+STUDIES = ("RF", "LG", "NC", "EN", "OI", "RO", "CU")
 NOISE_TYPE_AT_ZERO = "gaussian"
+WARM_START_PLACEHOLDER = "OVERRIDE_ME_WARM_START"
 
-WANDB = {"project": "SamudrACE-E3SMv3", "entity": "e3sm-aig"}
+WANDB = {"project": "ACE2S-sep26-atm", "entity": "e3sm-aig"}
 EMBED = {"embed_dim": 384}
-# The training window.  A weighted inference block's WHOLE trajectory has to
-# stay out of it, not just its first timestep -- a 7300-step rollout from 1980
-# runs to 1992, into the 1990-95 validation split.
-VALIDATION_WINDOW = ("1990-01-01", "1995-01-01")
+VALIDATION_WINDOW = (1990, 1995)
 
 
-def parse_runid(stem: str) -> tuple[dict[str, str], int]:
-    """<campaign>.<realm>.<delta>.s<seed> -> resolved levels, seed.
-
-    The delta is sparse: an axis absent from the id is a *claim* that the run
-    sits at the template value for it, and that claim is checked below exactly
-    as hard as an explicit level is.  Without that, omission would be a way to
-    hide a setting.
-    """
+def parse_runid(stem: str) -> tuple[str, dict[str, str], int]:
+    """<exp>.<campaign>.<realm>.<word>.S<seed> -> exp, levels, seed."""
     fields = stem.split(".")
-    if len(fields) != 4:
-        raise ValueError(f"not <campaign>.<realm>.<delta>.s<seed>: {stem}")
-    campaign, realm, word, seed = fields
+    if len(fields) != 5:
+        raise ValueError(f"not <exp>.<campaign>.<realm>.<word>.S<seed>: {stem}")
+    exp, campaign, realm, word, seed = fields
     if campaign != CAMPAIGN or realm != REALM:
         raise ValueError(f"not a {CAMPAIGN}.{REALM} run: {stem}")
-    if not seed.startswith("s") or not seed[1:].isdigit():
-        raise ValueError(f"seed field is not s<digits>: {seed}")
+    if len(exp) != 4 or exp[:2] not in STUDIES or not exp[2:].isdigit():
+        raise ValueError(
+            f"experiment id {exp!r} is not two study letters {list(STUDIES)} "
+            f"plus two digits"
+        )
+    if not (seed.startswith("S") and seed[1:].isdigit()):
+        raise ValueError(f"seed field is not S<digits>: {seed}")
 
-    levels = dict(BASELINE)
-    if word != "base":
-        pairs: list[tuple[str, str]] = []
-        for part in word.split("_"):
-            axis, sep, level = part.partition("-")
-            if not sep:
-                raise ValueError(f"delta field {part!r} is not <axis>-<level>")
-            if axis not in BASELINE:
-                raise ValueError(f"unknown axis {axis!r} in {word}")
-            if axis in [a for a, _ in pairs]:
-                raise ValueError(f"axis {axis!r} appears twice in {word}")
-            pairs.append((axis, level))
-            levels[axis] = level
-        # Canonical form: sorted, and no axis at its baseline value.  Two ids
-        # for one configuration is how a W&B workspace ends up showing the same
-        # arm under two names.
-        if pairs != sorted(pairs):
-            raise ValueError(f"delta {word} is not in canonical (sorted) order")
-        for axis, level in pairs:
-            if level == BASELINE[axis]:
-                raise ValueError(
-                    f"{axis}-{level} is the template value, so it must be "
-                    f"omitted from the run id"
-                )
-    return levels, int(seed[1:])
+    parts = word.split("_")
+    if len(parts) != len(POSITIONS):
+        raise ValueError(
+            f"factor word {word!r} has {len(parts)} positions, expected "
+            f"{len(POSITIONS)} ({'_'.join(p + '?' for p in POSITIONS)})"
+        )
+    levels: dict[str, str] = {}
+    for part, pos in zip(parts, POSITIONS):
+        if not part.startswith(pos):
+            raise ValueError(
+                f"factor word {word!r} is out of order: expected position "
+                f"{pos} where {part!r} is"
+            )
+        level = part[len(pos) :]
+        if level not in LEVELS[pos]:
+            raise ValueError(f"unknown level {part!r} in {word}")
+        levels[pos] = level
+    return exp, levels, int(seed[1:])
 
 
 def check(path: pathlib.Path) -> list[str]:
     """Complaints about one run config, empty if it is sound."""
     bad: list[str] = []
     try:
-        levels, seed = parse_runid(path.stem)
+        exp, levels, seed = parse_runid(path.stem)
     except ValueError as e:
         return [f"{path.name}: {e}"]
 
     d = yaml.safe_load(path.read_text())
     training = d["stepper_training"]
-    step = d["stepper"]["step"]["config"]
-    builder = step["builder"]["config"]
+    builder = d["stepper"]["step"]["config"]["builder"]["config"]
 
     def want(cond: bool, msg: str) -> None:
         if not cond:
@@ -135,123 +143,124 @@ def check(path: pathlib.Path) -> list[str]:
 
     want(d["seed"] == seed, f"id says seed {seed}, config says {d['seed']}")
 
-    # -- the delta, axis by axis --------------------------------------------
+    # -- the word, position by position --------------------------------------
     want(
-        training["n_ensemble"] == MEMBERS[levels["mem"]],
-        f"mem-{levels['mem']} but n_ensemble is {training['n_ensemble']}",
+        training["n_ensemble"] == MEMBERS[levels["M"]],
+        f"M{levels['M']} but n_ensemble is {training['n_ensemble']}",
     )
-    steps, last_only = ROLL[levels["roll"]]
+    steps, last_only = ROLLOUT[levels["R"]]
+    if isinstance(steps, int):
+        want_steps: object = steps
+    else:
+        # A sampled rollout is a TimeLengthProbabilities: an `outcomes` list of
+        # {steps, probability}, not the bare mapping the table is written as.
+        want_steps = {
+            "outcomes": [
+                {"steps": n, "probability": p} for n, p in sorted(steps.items())
+            ]
+        }
     want(
-        training["n_forward_steps"] == steps,
-        f"roll-{levels['roll']} but n_forward_steps is "
-        f"{training['n_forward_steps']}",
+        training["n_forward_steps"] == want_steps,
+        f"R{levels['R']} but n_forward_steps is {training['n_forward_steps']}",
     )
     want(
         training["optimize_last_step_only"] == last_only,
-        f"roll-{levels['roll']} wants optimize_last_step_only={last_only}, got "
+        f"R{levels['R']} wants optimize_last_step_only={last_only}, got "
         f"{training['optimize_last_step_only']}",
     )
-    noise = NOISE[levels["noise"]]
+    noise = NOISE_DIM[levels["Z"]]
     want(
         builder["noise_embed_dim"] == noise,
-        f"noise-{levels['noise']} but noise_embed_dim is "
-        f"{builder['noise_embed_dim']}",
+        f"Z{levels['Z']} but noise_embed_dim is {builder['noise_embed_dim']}",
     )
     # Isotropic noise at zero channels calls an inverse SHT on a zero-channel
-    # tensor and dies in the MKL FFT, so noise-0 must also carry the type.
-    want_type = NOISE_TYPE_AT_ZERO if noise == 0 else NTYPE[levels["ntype"]]
+    # tensor and dies in the MKL FFT, so Z0 must carry the type too.
+    want_type = NOISE_TYPE_AT_ZERO if noise == 0 else NOISE_TYPE[levels["N"]]
     want(
         builder["noise_type"] == want_type,
         f"expected noise_type {want_type}, got {builder['noise_type']}"
         + (" (isotropic at zero channels dies in the MKL FFT)" if noise == 0 else ""),
     )
 
+    init = training.get("parameter_init", {}).get("weights_path")
+    if levels["I"] == "1":
+        want(
+            init == WARM_START_PLACEHOLDER,
+            f"I1 but parameter_init.weights_path is {init!r}, not the "
+            f"placeholder run-train.sh resolves",
+        )
+    else:
+        want(init is None, f"I0 but parameter_init.weights_path is {init!r}")
+
     # -- the loss ------------------------------------------------------------
     loss = training["loss"]
     want(
-        loss["type"] == LOSS_TYPE[levels["obj"]],
-        f"obj-{levels['obj']} but loss type is {loss['type']}",
+        loss["type"] == OBJECTIVE[levels["D"]],
+        f"D{levels['D']} but loss type is {loss['type']}",
     )
-    if levels["obj"] == "mse":
-        # LossConfig.build discards every EnsembleLoss kwarg for MSE, so kwargs
-        # left in the file are dead text that reads as if it applied.
+    if levels["D"] == "1":
         want(
             not loss.get("kwargs"),
-            f"obj-mse but loss.kwargs is {loss.get('kwargs')}; MSE discards "
-            f"them, so the file would claim settings the run does not have",
+            f"D1 but loss.kwargs is {loss.get('kwargs')}; MSE discards them, so "
+            f"the file would claim settings the run does not have",
         )
-        for axis in ("crps", "fdcrps", "alpha"):
+        for pos in ("G", "Q", "Y"):
             want(
-                levels[axis] == BASELINE[axis],
-                f"obj-mse with {axis}-{levels[axis]}: unreachable under MSE",
+                levels[pos] == BASELINE[pos],
+                f"D1 with {pos}{levels[pos]}: unreachable under MSE",
             )
     else:
         kwargs = loss.get("kwargs") or {}
-        crps_w, energy_w = CRPS_WEIGHTS[levels["crps"]]
+        crps_w, energy_w = SPLIT[levels["G"]]
         want(
             kwargs.get("crps_weight") == crps_w
             and kwargs.get("energy_score_weight") == energy_w,
-            f"crps-{levels['crps']} wants ({crps_w}, {energy_w}), got "
+            f"G{levels['G']} wants ({crps_w}, {energy_w}), got "
             f"({kwargs.get('crps_weight')}, {kwargs.get('energy_score_weight')})",
         )
-
-        # THE ONE THAT WOULD HAVE CAUGHT aug26's E25 AND E26.
-        # get_energy_score raises unless there are exactly two members, and
-        # EnsembleLoss.forward calls it whenever energy_score_weight > 0, so
-        # this combination dies on the first training batch -- after config
-        # validation, after dataset construction, after the model is built.
-        # Verified on a GPU node 2026-09-03.
+        # BLOCKER 1 -- what would have caught aug26's E25 and E26.
         want(
-            not (energy_w > 0 and MEMBERS[levels["mem"]] != 2),
-            f"mem-{levels['mem']} with energy_score_weight {energy_w}: "
+            not (energy_w > 0 and MEMBERS[levels["M"]] != 2),
+            f"M{levels['M']} with energy_score_weight {energy_w}: "
             f"get_energy_score supports exactly two members and raises on the "
             f"first training batch otherwise",
         )
-
-        fd = FDCRPS[levels["fdcrps"]]
+        # BLOCKER 2 -- the mode_weights shape bug.
+        want(
+            crps_w > 0,
+            f"G{levels['G']} leaves the energy score as the only loss "
+            f"component; its shape carries two spurious leading dimensions and "
+            f"get_channel_losses raises on the first training batch",
+        )
+        fd = FDCRPS[levels["Q"]]
         if fd:
             want(
-                kwargs.get("finite_difference_crps_weight") == 0.1
+                kwargs.get("finite_difference_crps_weight") == FDCRPS_WEIGHT
                 and kwargs.get("finite_difference_crps_levels") == fd,
-                f"fdcrps-{levels['fdcrps']} but kwargs are "
+                f"Q{levels['Q']} but kwargs are "
                 f"{kwargs.get('finite_difference_crps_weight')} / "
                 f"{kwargs.get('finite_difference_crps_levels')}",
             )
         else:
             want(
                 "finite_difference_crps_weight" not in kwargs,
-                "fdcrps-0 but finite_difference_crps_weight is set",
+                "Q0 but finite_difference_crps_weight is set",
             )
-        alpha = ALPHA[levels["alpha"]]
-        if levels["alpha"] == BASELINE["alpha"]:
+        if levels["Y"] == BASELINE["Y"]:
             want(
                 "almost_fair_crps_alpha" not in kwargs,
-                "alpha-100 is the default, so it must not be written out",
+                "Y0 is the default, so it must not be written out",
             )
         else:
             want(
-                kwargs.get("almost_fair_crps_alpha") == alpha,
-                f"alpha-{levels['alpha']} but almost_fair_crps_alpha is "
+                kwargs.get("almost_fair_crps_alpha") == ALPHA[levels["Y"]],
+                f"Y{levels['Y']} but almost_fair_crps_alpha is "
                 f"{kwargs.get('almost_fair_crps_alpha')}",
-            )
-        # almost_fair_crps_alpha only parameterizes the CRPS module, which
-        # forward gates on crps_weight > 0; the finite-difference term is gated
-        # on its own weight alone.  So at crps-energy the first is inert and the
-        # second is not, and only one of them can be quietly wrong.
-        if levels["crps"] == "energy":
-            want(
-                levels["alpha"] == BASELINE["alpha"],
-                "crps-energy with a non-default alpha: inert at crps_weight 0",
-            )
-            want(
-                levels["fdcrps"] == BASELINE["fdcrps"],
-                "crps-energy with fdcrps set: that term is gated on its own "
-                "weight, so it would still run and the id would understate the "
-                "objective",
             )
 
     # -- sizing --------------------------------------------------------------
     batch = d["train_loader"]["batch_size"]
+    want(batch == BATCH, f"train batch_size is {batch}, not {BATCH}")
     want(
         d["validation"]["loader"]["batch_size"] == batch,
         "validation batch_size differs from train batch_size",
@@ -284,12 +293,18 @@ def check(path: pathlib.Path) -> list[str]:
             f"block {name!r} epochs {got} do not score the last epoch at "
             f"max_epochs {epochs} (want start {start}, step {stride})",
         )
-        fires = list(range(1, epochs + 1))[got.get("start", 0) :: got.get("step", 1)]
-        want(
-            bool(fires) and fires[-1] == epochs,
-            f"block {name!r} last fires at epoch {fires[-1] if fires else None}, "
-            f"not {epochs}",
-        )
+        # A weighted block selects the checkpoint, so its whole trajectory has
+        # to stay out of the validation window -- not just its first timestep.
+        if block.get("weight"):
+            span = block["n_forward_steps"] / STEPS_PER_YEAR
+            for t in block["loader"]["start_indices"]["times"]:
+                s = int(str(t)[:4])
+                want(
+                    not (s < VALIDATION_WINDOW[1] and s + span > VALIDATION_WINDOW[0]),
+                    f"weighted block {name!r} starts at {t} and runs {span:g} "
+                    f"years, crossing the {VALIDATION_WINDOW[0]}-"
+                    f"{VALIDATION_WINDOW[1]} validation window",
+                )
 
     # -- things that must not drift -----------------------------------------
     for k, v in EMBED.items():
@@ -304,29 +319,35 @@ def check(path: pathlib.Path) -> list[str]:
         "a generated file names someone's scratch; runs/ has to be "
         "byte-identical for every teammate",
     )
-
-    # A weighted inference block selects the checkpoint, so its whole
-    # trajectory has to stay out of the validation window.
-    for block in d.get("inference", []):
-        if not block.get("weight"):
-            continue
-        span_years = block["n_forward_steps"] / STEPS_PER_YEAR
-        for t in block["loader"]["start_indices"]["times"]:
-            want(
-                not _overlaps(t, span_years),
-                f"weighted block {block.get('name')!r} starts at {t} and runs "
-                f"{span_years:g} years, crossing the {VALIDATION_WINDOW[0][:4]}-"
-                f"{VALIDATION_WINDOW[1][:4]} validation window",
-            )
     return bad
 
 
-def _overlaps(start: str, span_years: float) -> bool:
-    lo = int(VALIDATION_WINDOW[0][:4])
-    hi = int(VALIDATION_WINDOW[1][:4])
-    s = int(str(start)[:4])
-    e = s + span_years
-    return s < hi and e > lo
+def check_rf01_claim() -> list[str]:
+    """RF01 is not generated; it is aug26's E01.  Verify that is still true.
+
+    The template was copied from that config.  If either drifts, the reference
+    this campaign differences five arms against silently stops being the run
+    those three trained seeds belong to -- and nothing else would notice.
+    """
+    template = HERE / "config-train-atm.template.yaml"
+    if not AUG26_BASELINE.exists():
+        return [f"cannot verify the RF01 claim: {AUG26_BASELINE} is missing"]
+    a = yaml.safe_load(template.read_text())
+    b = yaml.safe_load(AUG26_BASELINE.read_text())
+    # experiment_dir and the W&B project are submission properties, not model
+    # ones; everything that defines the trained model has to agree.
+    for cfg in (a, b):
+        cfg.pop("experiment_dir", None)
+        cfg.get("logging", {}).pop("project", None)
+        cfg.get("logging", {}).pop("entity", None)
+    if a != b:
+        differing = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+        return [
+            f"the template no longer matches aug26's config-train-atm.yaml "
+            f"(differs in {differing}), so RF01 is not E01 and the three "
+            f"reference seeds do not belong to this campaign"
+        ]
+    return []
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,9 +360,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no configs in {args.dir}", file=sys.stderr)
         return 2
     bad = [c for path in paths for c in check(path)]
+    bad += check_rf01_claim()
     for c in bad:
         print(c, file=sys.stderr)
-    print(f"checked {len(paths)} configs, {len(bad)} complaints")
+    print(f"checked {len(paths)} configs + the RF01 claim, {len(bad)} complaints")
     return 1 if bad else 0
 
 
