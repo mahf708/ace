@@ -102,6 +102,19 @@ activations are never held at once. A *fixed 20-step* last-step-only rollout
 measures **23,233 MiB**, about 2 GB above the 1-step arm — so depth does cost
 something, just sub-linearly and far less than the number of steps.
 
+That 20-step figure is **single-card**, and the reason is worth recording. Its
+80 GB counterpart read 17,471 MiB — 5.8 GB *below* the 1-step arm, which is
+impossible for a strictly larger workload. The explanation is in the step count:
+that run logged **zero** training steps, having spent its whole deadline
+building 31-timestep windows, so its peak is the setup-and-model-build
+high-water mark rather than a training peak. Every variant that actually
+trained agrees across the two cards to within 5.7%, and the four that got their
+full step budget agree to 2–4 MiB.
+
+The harness now labels a peak `valid=NO-not-a-training-peak` when the run
+logged fewer than three steps. Without that, an invalid measurement is
+indistinguishable from a real one and reads as a cross-card disagreement.
+
 Memory is therefore driven by **members**, with a mild rollout-depth term on
 top. The worst arm in this campaign peaks at **24,651 MiB of 40,960, with 40%
 headroom**, and it is the three-member one rather than any rollout one.

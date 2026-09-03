@@ -56,7 +56,15 @@ for entry in "${VARIANTS[@]}"; do
   peak=$(awk -F', ' '{if($2+0>m)m=$2+0}END{print m+0}' "$mem")
   steps=$(grep -c 'Step [0-9]*:' "$log") || steps=0
   err=$(grep -m1 -oE 'NotImplementedError[^"]{0,80}|torch.OutOfMemoryError[^"]{0,60}|CUDA out of memory' "$log" | head -1)
-  printf 'RESULT|%s|%s|peak_MiB=%s|steps=%s|%s\n' "$TAG" "$name" "${peak:-NA}" "${steps:-0}" "${err:-ok}"
+  # A peak sampled from a run that never reached a training step is the
+  # setup-and-model-build high-water mark, not a training peak, and it reads
+  # 20-25% low.  Label it so nobody differences it against a real one: the
+  # 20-step rollout produced 23,233 MiB on a card that trained and 17,471 on a
+  # card that timed out during dataset construction, which looked like a
+  # cross-card disagreement until the step count was checked.
+  valid=$([ "${steps:-0}" -ge 3 ] && echo yes || echo "NO-not-a-training-peak")
+  printf 'RESULT|%s|%s|peak_MiB=%s|steps=%s|valid=%s|%s\n' \
+      "$TAG" "$name" "${peak:-NA}" "${steps:-0}" "$valid" "${err:-ok}"
   rm -rf "$out"
   sleep 3
 done
