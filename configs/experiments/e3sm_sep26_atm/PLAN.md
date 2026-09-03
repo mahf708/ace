@@ -121,18 +121,42 @@ better problem: it can drain over weeks on `regular` QOS instead of needing a
 `requeueable-train.sh` already handles requeue-and-resume (measured: a requeue
 costs the ~21 min dataset setup, not a partial epoch).
 
-### The one real cost, and it is measured not assumed
+### The one real cost — measured: 9.4%, so take the 40 GB pool
 
 A100-40GB is HBM2 at 1555 GB/s; A100-80GB is HBM2e at 2039 GB/s — **31% more
-bandwidth**. If the SFNO step is bandwidth-bound, the cheap pool is also the
-slow pool, and the trade is "5.5x the nodes for up to ~30% more node-hours per
-result". The measurement in §7 runs the identical sweep on both card types
-concurrently, so the *ratio* is clean even though the absolute step times are
-contended by the six aug26 production jobs also running.
+bandwidth** — and the two are otherwise the same 400 W SXM4 part. If the SFNO
+step were bandwidth-bound, the cheap pool would also be the slow pool. The rule
+set before measuring was: within ~10% on step time, take 40 GB; at 30% slower,
+it becomes queue latency against charge and a judgement call.
 
-**Do not commit to 40 GB on the memory table alone. Commit on the step-time
-ratio.** If 40 GB is within ~10% on step time, take it. If it is 30% slower,
-the choice is queue latency against charge and it is the user's call.
+Measured 2026-09-03, the identical config on both card types concurrently, so
+the ratio is clean under shared CFS load:
+
+| | peak MiB | median s/batch | worst window |
+|---|---|---|---|
+| A100-40GB (`nid001185`) | 21,155 of 40,960 | **0.903** | 3.73 |
+| A100-80GB (`nid008649`) | 21,151 of 81,920 | **0.826** | 0.91 |
+| ratio | 1.000 | **1.094** | |
+
+**9.4% slower. Take the 40 GB pool.** 9.4% more node-hours in exchange for 5.5x
+the node pool and no reservation dependency is not a close call. The gap being
+far below the 31% bandwidth deficit says this configuration is compute-bound
+rather than bandwidth-bound, which is what `checkpointing: 3` buys — it trades
+recompute for activation memory, so the arithmetic-to-traffic ratio is high.
+
+Peak memory is identical on both cards to within 4 MiB, which is the expected
+result and a useful check that nothing about the measurement was card-specific.
+
+**The measurement nearly went wrong, and the way it did is worth recording.**
+The end-to-end mean over the 70-batch probe gave a 1.72x ratio — larger than the
+bandwidth deficit allows, which is what flagged it. The cause was a single
+3.73 s/batch interval in the 40 GB run against a steady 0.87–0.93 elsewhere:
+the `time_buffer` window refill that aug26 already documents as **bimodal, not
+noisy** ("twenty steps at 17-18 s, then one interval at 163-216 s"). Over 70
+batches exactly one such stall lands in one run and not the other, so an
+end-to-end mean is a coin flip on whether the refill was caught. `analysis/`
+reports the **median of the per-window rates** with the max beside it, so the
+stall stays visible instead of being averaged into the answer.
 
 ---
 
@@ -787,8 +811,10 @@ Ordered by how much they change what gets built.
    costs nothing and could halve the campaign. Recommend gating on it.
 3. **Seeds against arms.** 10 arms × 1 seed, or ~6 arms × 2–3 seeds for the
    same charge. For an ablation study I would take the replication. §5.
-4. **40 GB or 80 GB** — pending the step-time ratio in §2. Memory is settled;
-   speed is not.
+4. ~~**40 GB or 80 GB**~~ — **answered: 40 GB.** 48% memory headroom and 9.4%
+   slower per step, against 5.5x the node pool and no reservation. §2. What is
+   left is a preference, not a question: whether to keep a small hbm80g
+   allocation for the arms whose critical path matters most.
 5. **Who fixes `get_energy_score`, and when.** aug26's E25/E26 are queued and
    will crash. §4.
 6. **Does REF-D (aug26 E21) actually run?** Half of Tier 1 differences against
@@ -838,11 +864,19 @@ three-seed spread of the area-weighted `PS` bias RMSE *equals its mean*
 (124 ± 124 Pa), narrowing only to 98.6 ± 23.2 Pa by epoch 9; `Tat2m` goes
 0.454 ± 0.21 K → 0.298 ± 0.12 K.
 
-**Card sweep** — running: the 12-variant sweep on one node × 4 GPUs of the
-interactive allocation (`nid001185`, **A100-SXM4-40GB, 40960 MiB, 251 GB host**),
-with the matching hbm80g job queued for the ratio. Fills in the memory table of
-§2 and the `rel` estimates for `roll-c2`, `fdcrps-1` and `ntype-gauss`, which are
-still arithmetic rather than measurement.
+**Card sweep** — the 12-variant sweep on one node × 4 GPUs of each card type,
+run concurrently. First point in and it settles §2: A100-40GB
+(`nid001185`, 40960 MiB, 251 GB host) at 21,155 MiB peak and 0.903 s/batch
+median; A100-80GB (`nid008649`, 81920 MiB) at 21,151 MiB and 0.826 s/batch.
+**Ratio 1.094.** Remaining variants still running; they fill in the `rel`
+estimates for `roll-c2`, `fdcrps-1` and `ntype-gauss`, which are arithmetic
+rather than measurement until they land. Scripts:
+`analysis/card-sweep.sh` and `analysis/steprate.py`.
+
+For reference, aug26 measured 0.925 s/batch clean on an 80 GB card at
+production scale (4 nodes / 16 ranks). This probe is 1 node / 4 ranks on a
+3-year subset, so the absolute numbers are not the production ones — the
+card-to-card ratio is what it is for.
 
 Two operational notes bought the hard way and worth writing down:
 
