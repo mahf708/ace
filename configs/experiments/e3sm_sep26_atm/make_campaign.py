@@ -533,9 +533,9 @@ def validate(run: Run) -> list[str]:
     # first-batch faults, unit tests were not the standard for lifting the
     # guards.  Both were re-run for real on a GPU node:
     #
-    #   M3 + energy_score_weight 0.1   7 steps, loss 4.0444 -> 1.8906,
+    #   M3 + energy_score_weight 0.1   209 steps, loss 4.0444 -> 0.3705,
     #                                  zero NotImplementedError
-    #   crps_weight 0 / energy 1.0     6 steps, loss 1.1952 -> 0.9041,
+    #   crps_weight 0 / energy 1.0     250 steps, loss 1.1952 -> 0.2952,
     #                                  zero "Per-channel loss has" errors
     #
     # See PLAN.md 12.  What remains refused below is degeneracy and

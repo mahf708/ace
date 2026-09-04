@@ -162,8 +162,8 @@ def test_generated_configs_use_the_new_wandb_project():
 def test_energy_score_now_permits_any_member_count(members):
     """Was aug26's E25 and E26, which raised on the first batch and were
     refused for it. get_energy_score is generalised on this branch, and M3
-    with an energy weight was re-run on a node -- 7 steps, loss 4.0444 ->
-    1.8906 -- rather than trusted to unit tests, because the fault it used to
+    with an energy weight was re-run on a node -- 209 steps, loss 4.0444 ->
+    0.3705 -- rather than trusted to unit tests, because the fault it used to
     hit only appeared at training time."""
     config = _built(M=members)
     assert config["stepper_training"]["n_ensemble"] == int(members)
@@ -181,7 +181,7 @@ def test_pure_crps_permits_any_member_count(members):
 def test_pure_energy_score_now_builds():
     """G2 leaves the energy score as the only loss component, which used to
     break get_channel_losses on the first batch. Re-run on a node after the
-    mode_weights fix landed: 6 steps, loss 1.1952 -> 0.9041, and no
+    mode_weights fix landed: 250 steps, loss 1.1952 -> 0.2952, and no
     "Per-channel loss has" error."""
     config = _built(G="2")
     kwargs = config["stepper_training"]["loss"]["kwargs"]

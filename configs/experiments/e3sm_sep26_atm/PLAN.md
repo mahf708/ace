@@ -1174,8 +1174,8 @@ branch.
 
 | was refused | fault it used to hit | re-run result |
 |---|---|---|
-| `M != 2` with an energy weight | `get_energy_score` raised `NotImplementedError` | **7 steps, loss 4.0444 → 1.8906**, zero `NotImplementedError` |
-| `crps_weight: 0` (`G2`) | `get_channel_losses` raised "Per-channel loss has 1 elements but 50 channel names were provided" | **6 steps, loss 1.1952 → 0.9041**, zero such errors |
+| `M != 2` with an energy weight | `get_energy_score` raised `NotImplementedError` | **209 steps, loss 4.0444 → 0.3705**, zero `NotImplementedError` |
+| `crps_weight: 0` (`G2`) | `get_channel_losses` raised "Per-channel loss has 1 elements but 50 channel names were provided" | **250 steps, loss 1.1952 → 0.2952**, zero such errors |
 
 Both guards are gone from `validate()` and `check_campaign.py`, and the five
 tests that asserted them are now permission tests: they assert the same

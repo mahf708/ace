@@ -23,7 +23,7 @@ no-op, so the weights were compared directly
 | | |
 |---|---|
 | shared tensors | 103 of the parent's 104 |
-| median relative difference | **1.1e-02** (loaded, then ~10 steps of training) |
+| median relative difference | **1.1e-02** (loaded, then a few steps of training) |
 | an independent draw | **1.41e+00** |
 | tensors only in the child | **32** -- the noise pathway, keeping its own init |
 
@@ -71,7 +71,7 @@ three applied.
 
 ### B1. `EnergyScoreLoss` mode_weights shape — DONE, ported, VERIFIED IN SITU
 Pure energy (`G2`) -- the config whose per-channel shape used to raise on the
-first batch -- now trains: 6 steps, loss 1.1952 -> 0.9041, zero "Per-channel
+first batch -- now trains: 250 steps, loss 1.1952 -> 0.2952, zero "Per-channel
 loss has" errors. Both first-batch blockers are lifted from the generator; see
 `PLAN.md` 12.
 ```
@@ -82,8 +82,8 @@ Evidence: `analysis/verify_mode_weights_fix.py`. Unblocks `G2`.
 
 ### B2. Generalize `get_energy_score` past two members — DONE, ported, VERIFIED IN SITU
 `M3` with `energy_score_weight: 0.1` -- the exact call that used to raise
-`NotImplementedError` on the first training batch -- now trains: 7 logged steps,
-loss 4.0444 -> 1.8906, zero `NotImplementedError`. Unit tests pin the score
+`NotImplementedError` on the first training batch -- now trains: 209 logged steps,
+loss 4.0444 -> 0.3705, zero `NotImplementedError`. Unit tests pin the score
 against the unbiased estimator at M = 1, 2, 3 and 5.
 
 **Consequence for the run list, not yet taken.** EN02 is `D0_G1_M3` -- pure CRPS

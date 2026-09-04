@@ -169,8 +169,8 @@ branch.
 | B4 | every data-parallel rank draws identical noise | fix tested, **deliberately not taken** — see `PLAN.md` §11.1 |
 
 Both first-batch blockers are lifted from the generator on measured evidence
-(`PLAN.md` §12): `M3` with an energy weight trains (loss 4.0444 → 1.8906) and
-pure energy trains (1.1952 → 0.9041). What the generator still refuses is
+(`PLAN.md` §12): `M3` with an energy weight trains for 209 steps (loss 4.0444 → 0.3705)
+and pure energy for 250 steps (1.1952 → 0.2952). What the generator still refuses is
 degeneracy and truth-in-labelling, not upstream breakage.
 
 **Consequence for aug26, running now:** its E01 predates B1, so the energy
