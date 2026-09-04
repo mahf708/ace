@@ -36,6 +36,7 @@ import yaml
 HERE = pathlib.Path(__file__).resolve().parent
 RUNS = HERE.parent / "runs"
 GPUS_PER_NODE = 4
+WARM_START_PLACEHOLDER = "OVERRIDE_ME_WARM_START"
 
 
 def _shrink(subset: dict, years: int) -> dict:
@@ -105,6 +106,19 @@ def main() -> int:
     p.add_argument("-o", "--out-dir", default=None)
     p.add_argument("--years", type=int, default=3)
     p.add_argument("--nodes", type=int, default=1)
+    p.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=None,
+        help="save a checkpoint every N batches, so a parent for a warm-start "
+        "arm can be produced without training a whole epoch",
+    )
+    p.add_argument(
+        "--warm-start",
+        default=None,
+        help="resolve the run's OVERRIDE_ME_WARM_START placeholder to this "
+        "checkpoint path (required to smoke an I1 arm)",
+    )
     args = p.parse_args()
 
     matches = sorted(RUNS.glob(f"{args.exp}.*.yaml"))
@@ -120,6 +134,21 @@ def main() -> int:
     )
     root.mkdir(parents=True, exist_ok=True)
     config = smoke(yaml.safe_load(src.read_text()), args.years, args.nodes, str(root))
+    if args.checkpoint_every is not None:
+        config["save_checkpoint"] = True
+        config["checkpoint_every_n_batches"] = args.checkpoint_every
+    init = config["stepper_training"].get("parameter_init") or {}
+    if init.get("weights_path") == WARM_START_PLACEHOLDER:
+        if args.warm_start is None:
+            print(
+                f"{args.exp} warm-starts from another run; pass --warm-start "
+                f"<checkpoint>. Produce one with: make_smoke_config.py "
+                f"<parent> --checkpoint-every 5",
+                file=sys.stderr,
+            )
+            return 1
+        init["weights_path"] = args.warm_start
+
     dest = root / "config.yaml"
     dest.write_text(yaml.safe_dump(config, sort_keys=False))
 

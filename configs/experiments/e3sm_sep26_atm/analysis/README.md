@@ -35,6 +35,9 @@ Two traps, both paid for once already:
   `LOCAL_RANK`, which plain srun does not set, so all four ranks land on
   `cuda:0` and OOM. The OOM looks like the arm needing more memory; it is not.
   The giveaway is several processes listed against device 0.
+* **Pin the node with `-w`.** Two overlapping steps that each ask for all
+  four GPUs on one node will collide, and the loser dies with no traceback --
+  it just stops logging. Give each concurrent smoke run its own node.
 * **Narrowing `subset` alone does not make it cheap.** The loader still opens
   every file the pattern matches and subsets afterwards, so setup stays at its
   full length. `make_smoke_config.py` narrows `file_pattern` to the same years
@@ -55,6 +58,18 @@ which is the same size as the effect being measured:
 ```bash
 FME_FORCE_CPU=1 .venv/bin/python analysis/z0_degeneracy.py
 ```
+
+To smoke a warm-start arm, make its parent produce a checkpoint first --
+`--checkpoint-every` writes one after N batches rather than a whole epoch:
+
+```bash
+./analysis/make_smoke_config.py RF02 --checkpoint-every 5 -o $SMOKE/rf02-parent
+# ...run it, then:
+./analysis/make_smoke_config.py CU01 --warm-start $SMOKE/rf02-parent/training_checkpoints/ckpt.tar
+```
+
+`make_smoke_config.py` refuses an `I1` arm without `--warm-start` rather than
+writing a config with the placeholder still in it.
 
 `noise_amplitude.py` takes a `training_checkpoints/` directory. The others
 are single-process and need no arguments.
