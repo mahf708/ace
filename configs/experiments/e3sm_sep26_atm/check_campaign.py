@@ -225,20 +225,11 @@ def check(path: pathlib.Path) -> list[str]:
             f"G{levels['G']} wants ({crps_w}, {energy_w}), got "
             f"({kwargs.get('crps_weight')}, {kwargs.get('energy_score_weight')})",
         )
-        # BLOCKER 1 -- what would have caught aug26's E25 and E26.
-        want(
-            not (energy_w > 0 and MEMBERS[levels["M"]] != 2),
-            f"M{levels['M']} with energy_score_weight {energy_w}: "
-            f"get_energy_score supports exactly two members and raises on the "
-            f"first training batch otherwise",
-        )
-        # BLOCKER 2 -- the mode_weights shape bug.
-        want(
-            crps_w > 0,
-            f"G{levels['G']} leaves the energy score as the only loss "
-            f"component; its shape carries two spurious leading dimensions and "
-            f"get_channel_losses raises on the first training batch",
-        )
+        # BLOCKER 1 and BLOCKER 2 lifted 2026-09-03: the member limit and the
+        # mode_weights shape are fixed on this branch, and both were re-run on
+        # a GPU node rather than trusted to unit tests, because both used to
+        # raise on the first training batch.  See PLAN.md 12.
+
         fd = FDCRPS[levels["Q"]]
         if fd:
             want(
@@ -264,15 +255,10 @@ def check(path: pathlib.Path) -> list[str]:
                 f"Y{levels['Y']} but almost_fair_crps_alpha is "
                 f"{kwargs.get('almost_fair_crps_alpha')}",
             )
-            # BLOCKER 4 -- get_crps hard-codes epsilon = (1-alpha)/2, which is
-            # the AIFS almost-fair definition only at two members.  MEASURED
-            # 0.89% out at M3, 1.16% at M4.
-            want(
-                MEMBERS[levels["M"]] == 2,
-                f"Y{levels['Y']} at M{levels['M']}: epsilon is hard-coded to "
-                f"(1-alpha)/2, so this is not almost-fair CRPS at "
-                f"{MEMBERS[levels['M']]} members",
-            )
+            # The M2-only restriction on Y1 is lifted: epsilon now scales
+            # with the ensemble size, so this is almost-fair CRPS at any
+            # member count.
+
         # BLOCKER 3 -- with no noise channels the members are bit-identical, so
         # a pure-CRPS objective at M>1 is the M1 objective at M times the cost.
         want(

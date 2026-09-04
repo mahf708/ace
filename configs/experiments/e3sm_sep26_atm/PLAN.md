@@ -1160,3 +1160,54 @@ extended onto the member sweep without someone noticing.
 * `Q3` does not "triple the auxiliary weight" and the review's own text
   half-concedes this: `FiniteDifferenceCRPSLoss.forward` returns
   `result / self.levels`, so Q3 spreads one 0.1 across three scales.
+
+---
+
+## 12. The two blockers, lifted on evidence
+
+Both upstream blockers refused configurations that raise on the **first
+training batch** -- after config validation, after dataset construction, after
+the model is built. That is precisely the class of fault a unit test does not
+see, so passing unit tests was never going to be the standard for lifting
+them. Each was re-run for real on a GPU node after its fix landed on this
+branch.
+
+| was refused | fault it used to hit | re-run result |
+|---|---|---|
+| `M != 2` with an energy weight | `get_energy_score` raised `NotImplementedError` | **7 steps, loss 4.0444 → 1.8906**, zero `NotImplementedError` |
+| `crps_weight: 0` (`G2`) | `get_channel_losses` raised "Per-channel loss has 1 elements but 50 channel names were provided" | **6 steps, loss 1.1952 → 0.9041**, zero such errors |
+
+Both guards are gone from `validate()` and `check_campaign.py`, and the five
+tests that asserted them are now permission tests: they assert the same
+configurations *build*, and carry the measured evidence in their docstrings so
+the reason survives.
+
+The `Y1`-only-at-`M2` restriction is lifted too, on **weaker evidence, labelled
+as such**: epsilon now scales with the ensemble size and is checked against the
+analytic AIFS definition at M = 1, 2, 3 and 5, but it was not re-run on a node.
+The distinction is real — that one is a scalar coefficient inside the CRPS
+term, which every `D0` arm already exercises on every batch, so there is no
+unexercised branch for a first-batch fault to hide in. The other two gated
+whole limbs of the loss.
+
+### What is still refused, and why
+
+Nothing upstream. What remains is degeneracy and truth-in-labelling:
+
+* `Z0` + pure CRPS + more than one member — the members are **bit-identical**,
+  so this is the `M1` objective at M times the cost.
+* `N1` at `Z0` — no noise of either type is drawn, so the token names nothing.
+* `Y1` at `crps_weight: 0` — alpha only parameterises the CRPS module, which
+  `EnsembleLoss.forward` gates off entirely there.
+* `D1` with any `G`/`Q`/`Y` level — `LossConfig.build` discards every
+  `EnsembleLoss` kwarg for MSE, so the id would claim a setting the run
+  does not have.
+
+### What this unlocks, not yet taken
+
+`G2` is now a runnable level, and `M1`/`M3` are runnable with an energy weight.
+No arm was added: the run list is a separate decision. The one that looks
+clearly worth making is **EN02**, which sits at `D0_G1_M3` — pure CRPS — only
+because `G0` at `M3` used to be impossible. At `G0` it would difference against
+RF01 on a single factor (member count) rather than against EN01 on two. It
+renames the run, so it is the user's call.

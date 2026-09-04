@@ -13,15 +13,15 @@ load-bearing rather than decorative.
 import copy
 import pathlib
 
+import check_campaign as chk
+import make_campaign as mk
 import pytest
 import torch
 import yaml
+
 from fme.core.ensemble import get_crps, get_energy_score
 from fme.core.gridded_ops import LatLonOperations
 from fme.core.loss import EnsembleLoss, LossOutput
-
-import check_campaign as chk
-import make_campaign as mk
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -158,11 +158,16 @@ def test_generated_configs_use_the_new_wandb_project():
 # ------------------------------------------------------------------ blockers --
 
 
-def test_energy_score_with_one_or_three_members_is_refused():
-    """aug26's E25 and E26.  Raise on the first batch; nothing caught them."""
-    for members in ("1", "3"):
-        with pytest.raises(mk.ConfigError, match="exactly two members"):
-            mk.build(_baseline(), _run(M=members))
+@pytest.mark.parametrize("members", ["1", "2", "3"])
+def test_energy_score_now_permits_any_member_count(members):
+    """Was aug26's E25 and E26, which raised on the first batch and were
+    refused for it. get_energy_score is generalised on this branch, and M3
+    with an energy weight was re-run on a node -- 7 steps, loss 4.0444 ->
+    1.8906 -- rather than trusted to unit tests, because the fault it used to
+    hit only appeared at training time."""
+    config = _built(M=members)
+    assert config["stepper_training"]["n_ensemble"] == int(members)
+    assert config["stepper_training"]["loss"]["kwargs"]["energy_score_weight"] > 0
 
 
 @pytest.mark.parametrize("members", ["1", "2", "3"])
@@ -173,10 +178,14 @@ def test_pure_crps_permits_any_member_count(members):
     assert config["stepper_training"]["n_ensemble"] == int(members)
 
 
-def test_pure_energy_score_is_refused_until_the_shape_bug_is_fixed():
-    """G2 leaves the energy score alone, and its shape breaks get_channel_losses."""
-    with pytest.raises(mk.ConfigError, match="spurious leading"):
-        mk.build(_baseline(), _run(G="2"))
+def test_pure_energy_score_now_builds():
+    """G2 leaves the energy score as the only loss component, which used to
+    break get_channel_losses on the first batch. Re-run on a node after the
+    mode_weights fix landed: 6 steps, loss 1.1952 -> 0.9041, and no
+    "Per-channel loss has" error."""
+    config = _built(G="2")
+    kwargs = config["stepper_training"]["loss"]["kwargs"]
+    assert kwargs["crps_weight"] == 0.0 and kwargs["energy_score_weight"] == 1.0
 
 
 def test_the_other_splits_still_build():
@@ -277,22 +286,22 @@ def test_pure_crps_with_identical_members_is_refused():
             _built(G="1", M=m, Z="0")
 
 
-def test_almost_fair_alpha_is_refused_away_from_two_members():
-    """get_crps hard-codes epsilon = (1-alpha)/2, which is the almost-fair
-    definition only at M2 (MEASURED 0.89% out at M3)."""
-    for m in ("1", "3"):
-        with pytest.raises(mk.ConfigError, match="almost-fair definition only"):
-            _built(G="1", M=m, Y="1")
-    _built(Y="1")  # M2 is the template's level, and is fine
+@pytest.mark.parametrize("members", ["1", "2", "3"])
+def test_almost_fair_alpha_now_permitted_at_any_member_count(members):
+    """epsilon scales with the ensemble size on this branch, so almost-fair
+    CRPS is the AIFS definition everywhere, not only at two members."""
+    config = _built(G="1", M=members, Y="1")
+    assert (
+        config["stepper_training"]["loss"]["kwargs"]["almost_fair_crps_alpha"] == 0.95
+    )
 
 
-def test_checker_catches_a_lying_alpha_at_three_members(tmp_path):
-    """The checker must reach BLOCKER 4 on its own, not by importing it."""
-    run = _run(G="1", M="3")
-    config = _built(G="1", M="3")
-    config["stepper_training"]["loss"]["kwargs"]["almost_fair_crps_alpha"] = 0.95
-    runid = run.runid.replace("_Y0_", "_Y1_")
-    assert any("almost-fair" in c for c in _check_written(tmp_path, config, runid))
+def test_checker_accepts_alpha_at_three_members(tmp_path):
+    """The alpha restriction is lifted, so a Y1/M3 config must now pass the
+    checker rather than be reported as a lie."""
+    config = _built(G="1", M="3", Y="1")
+    runid = _run(G="1", M="3", Y="1").runid
+    assert _check_written(tmp_path, config, runid) == []
 
 
 def test_checker_catches_bit_identical_members(tmp_path):
@@ -408,17 +417,15 @@ def test_checker_catches_noise_type_drift(tmp_path):
     assert any("MKL FFT" in c for c in _check_written(tmp_path, broken, runid))
 
 
-def test_checker_catches_the_energy_score_blocker_in_a_written_config(tmp_path):
-    """Assemble aug26's E25 by hand -- the path by which it reached runs/."""
-    config = _built(G="1")
-    config["stepper_training"]["n_ensemble"] = 1
-    config["stepper_training"]["loss"]["kwargs"] = {
-        "crps_weight": 0.9,
-        "energy_score_weight": 0.1,
-    }
+def test_checker_accepts_an_energy_score_at_one_member(tmp_path):
+    """This shape was aug26's E25, and it used to be refused. It is now a
+    legal config, so the checker must pass it -- while still catching an
+    n_ensemble that disagrees with the run id, which is a different fault."""
+    config = _built(M="1")
     runid = f"EN01.sep26.atm.{mk.Word.of(M='1').word()}.S01"
-    complaints = _check_written(tmp_path, config, runid)
-    assert any("exactly two members" in c for c in complaints), complaints
+    assert _check_written(tmp_path, config, runid) == []
+    config["stepper_training"]["n_ensemble"] = 2
+    assert any("M1" in c for c in _check_written(tmp_path, config, runid))
 
 
 def test_checker_catches_a_loss_weight_that_disagrees_with_the_id(tmp_path):

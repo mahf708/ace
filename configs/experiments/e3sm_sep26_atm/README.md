@@ -155,26 +155,29 @@ Treat them as 1.00 ± 0.04.
 
 ---
 
-## Blocked on upstream
+## Upstream: four bugs, all fixed
 
-Both found by running arms, not validating them. The generator refuses both.
+Found by running arms, not validating them. All four now have tested fixes on
+branches off `main` (pushed to the fork), and three are cherry-picked onto this
+branch.
 
-1. **`M1`/`M3` with any energy-score weight.** `get_energy_score`
-   (`fme/core/ensemble.py:80`) supports exactly two members. *Workaround in
-   use:* the member sweep runs on `G1`, which sets `energy_score_weight: 0` and
-   makes `EnsembleLoss.forward` skip it entirely.
-2. **`G2` (pure energy).** `EnergyScoreLoss` sizes `mode_weights` against
-   `x_hat`, which still has the ensemble dim, so the component carries two
-   spurious leading dims and `get_channel_losses` raises on the first batch.
-   One-line fix verified in `analysis/verify_mode_weights_fix.py`; E01's total
-   is bit-identical across it.
+| | bug | status |
+|---|---|---|
+| B1 | `EnergyScoreLoss` sized `mode_weights` against `x_hat`, which still has the ensemble dim | fixed, ported, `G2` re-run on a node |
+| B2 | `get_energy_score` supported exactly two members | fixed, ported, `M3` re-run on a node |
+| B5 | `get_crps` epsilon hard-coded to `(1-alpha)/2` | fixed, ported, unit-tested at M = 1, 2, 3, 5 |
+| B4 | every data-parallel rank draws identical noise | fix tested, **deliberately not taken** — see `PLAN.md` §11.1 |
 
-**Consequence for aug26, running now:** E01's total loss is correct, but the
-energy term's contribution to the *per-channel* breakdown is a constant across
-all 50 channels. Don't present per-channel loss comparisons from a `D0` run
-until the fix lands.
+Both first-batch blockers are lifted from the generator on measured evidence
+(`PLAN.md` §12): `M3` with an energy weight trains (loss 4.0444 → 1.8906) and
+pure energy trains (1.1952 → 0.9041). What the generator still refuses is
+degeneracy and truth-in-labelling, not upstream breakage.
 
----
+**Consequence for aug26, running now:** its E01 predates B1, so the energy
+term's contribution to the *per-channel* breakdown is a constant across all 50
+channels. The scalar total is unaffected — bit-identical across the fix — so
+rankings survive, but don't present per-channel loss comparisons from a `D0`
+run trained before it.
 
 ## Testing
 

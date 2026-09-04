@@ -69,7 +69,11 @@ safe to do under a campaign that differences against an inherited RF01:
 The 86 loss/ensemble tests and 68 campaign tests pass on the branch with all
 three applied.
 
-### B1. `EnergyScoreLoss` mode_weights shape — DONE, on a branch
+### B1. `EnergyScoreLoss` mode_weights shape — DONE, ported, VERIFIED IN SITU
+Pure energy (`G2`) -- the config whose per-channel shape used to raise on the
+first batch -- now trains: 6 steps, loss 1.1952 -> 0.9041, zero "Per-channel
+loss has" errors. Both first-batch blockers are lifted from the generator; see
+`PLAN.md` 12.
 ```
 (*([1] * (x_hat.ndim - 1)), n_l, n_m)  ->  (*([1] * (es.ndim - 2)), n_l, n_m)
 ```
@@ -142,7 +146,7 @@ and setup is paid on every requeue -- ~10 times over a 114 h run. `FIXED_HOURS`
 is calibrated on the 1-step arm, so RO04 is probably ~117 h. Inside the cost
 model's ~2% precision; a deeper rollout than 20 steps would not be.
 
-### C4. Axes deliberately not run
+### C4. Axes deliberately not run — mostly no longer blocked
 `G2` (blocked, B1), `R3` (≤4 sampled — `R4` covers the question), `M2`/`M3`
 under `G0` (blocked, B2), `energy_score_whitening` (untested knob, no level
 defined). Adding any of these is a level, not an axis, so it renames nothing.

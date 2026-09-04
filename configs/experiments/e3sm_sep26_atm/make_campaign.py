@@ -519,32 +519,27 @@ def validate(run: Run) -> list[str]:
     crps_w, energy_w = SPLIT[g]
     ensemble = d == "0"
 
-    # BLOCKER 1.  get_energy_score (fme/core/ensemble.py:80) opens with
-    # `if gen.shape[1] != 2: raise NotImplementedError`; EnergyScoreLoss.forward
-    # calls it unconditionally and EnsembleLoss.forward calls that whenever
-    # energy_score_weight > 0.  So this raises on the FIRST BATCH -- after config
-    # validation, after dataset construction, after the model is built.
-    # Reproduced on a GPU node; this is what aug26's E25 and E26 did.
-    want(
-        not (ensemble and energy_w > 0 and m != "2"),
-        f"M{m} with energy_score_weight {energy_w}: get_energy_score supports "
-        f"exactly two members and raises on the first training batch otherwise. "
-        f"Use G1, which gates the energy score off entirely",
-    )
-
-    # BLOCKER 2.  EnergyScoreLoss builds mode_weights with x_hat.ndim - 1 leading
-    # singleton dims, but get_energy_score has already consumed the ensemble dim,
-    # so the energy component is shaped (1, 1, B, C, n_l, n_m).  With a CRPS
-    # component present the correctly-shaped one carries the channel breakdown;
-    # alone, single_module.py:1757 raises "Per-channel loss has 1 elements but
-    # 50 channel names were provided".
-    want(
-        not (ensemble and crps_w == 0.0),
-        f"G{g} sets crps_weight to 0, leaving the energy score as the only loss "
-        f"component. Its shape carries two spurious leading dimensions, so "
-        f"get_channel_losses raises on the first training batch. Blocked until "
-        f"the mode_weights ndim bug is fixed upstream",
-    )
+    # BLOCKER 1 and BLOCKER 2 -- LIFTED 2026-09-03.  Both used to refuse
+    # configurations that raise on the FIRST TRAINING BATCH, after config
+    # validation, after dataset construction, after the model is built:
+    #
+    #   * any member count but two with an energy-score weight
+    #     (get_energy_score raised NotImplementedError -- aug26's E25 and E26),
+    #   * crps_weight 0, leaving the energy score alone with a shape carrying
+    #     two spurious leading dims (get_channel_losses raised "Per-channel
+    #     loss has 1 elements but 50 channel names were provided").
+    #
+    # The upstream fixes are now on this branch, and because both faults were
+    # first-batch faults, unit tests were not the standard for lifting the
+    # guards.  Both were re-run for real on a GPU node:
+    #
+    #   M3 + energy_score_weight 0.1   7 steps, loss 4.0444 -> 1.8906,
+    #                                  zero NotImplementedError
+    #   crps_weight 0 / energy 1.0     6 steps, loss 1.1952 -> 0.9041,
+    #                                  zero "Per-channel loss has" errors
+    #
+    # See PLAN.md 12.  What remains refused below is degeneracy and
+    # truth-in-labelling, not upstream breakage.
 
     # LossConfig.build discards every EnsembleLoss kwarg for MSE, so these would
     # parse, run, and read as a lie in the file.
@@ -607,16 +602,15 @@ def validate(run: Run) -> list[str]:
         f"effect. Leave N at {BASELINE['N']}",
     )
 
-    # almost_fair_crps_alpha's epsilon is (1-alpha)/2 in get_crps but
-    # (1-alpha)/n_ensemble in AIFS-CRPS.  Exact at M2; 0.89% out at M3 and 1.16%
-    # at M4 (MEASURED, analysis/loss_semantics.py).  Refuse the arms where the
-    # implementation does not compute what the run id names.
-    want(
-        not (ensemble and y != BASELINE["Y"] and m != "2"),
-        f"Y{y} at M{m}: get_crps hard-codes epsilon = (1-alpha)/2, which is "
-        f"the almost-fair definition only at two members. At M{m} the run would "
-        f"not be computing almost-fair CRPS at all",
-    )
+    # The Y1-only-at-M2 guard is LIFTED too: get_crps now scales epsilon with
+    # the ensemble size, so almost-fair CRPS is the AIFS definition at every
+    # member count, checked against it analytically at M = 1, 2, 3 and 5.
+    #
+    # Weaker evidence than the two above, and deliberately labelled as such:
+    # this one was not re-run on a node.  It is a scalar coefficient inside the
+    # CRPS term, which every D0 arm already exercises on every batch, so there
+    # is no unexercised code path for a first-batch fault to hide in -- unlike
+    # BLOCKER 1 and 2, which gated whole branches of the loss.
 
     # Two waste guards.  Both are right about the waste, and the LG block
     # deliberately spends it, so they are gated on an explicit opt-in that
