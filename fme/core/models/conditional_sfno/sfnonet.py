@@ -786,7 +786,20 @@ class SphericalFourierNeuralOperatorNet(torch.nn.Module):
         x = self.pos_drop(x)
 
         if self._clip_latent_global_means:
-            global_means = x.mean(dim=(-2, -1), keepdim=True)
+            dist = Distributed.get_instance()
+            # A per-channel mean over the whole sphere, not over this rank's
+            # tile: under spatial parallelism `x` holds one tile, so a plain
+            # `x.mean((-2, -1))` would give each spatial co-rank a different
+            # "global" mean and hence a different envelope and a different
+            # eval-time shift. Sum locally and reduce over the spatial group.
+            # Identity without spatial parallelism.
+            local_sum = x.sum(dim=(-2, -1), keepdim=True)
+            local_count = torch.full_like(
+                local_sum[:1, :1], float(x.shape[-2] * x.shape[-1])
+            )
+            global_means = dist.spatial_reduce_sum(local_sum) / dist.spatial_reduce_sum(
+                local_count
+            )
             if self.training:
                 with torch.no_grad():
                     if self._gm_reset_pending:
@@ -795,7 +808,9 @@ class SphericalFourierNeuralOperatorNet(torch.nn.Module):
                         self._gm_reset_pending = False
                     batch_min = global_means.detach().amin(dim=0, keepdim=True)
                     batch_max = global_means.detach().amax(dim=0, keepdim=True)
-                    dist = Distributed.get_instance()
+                    # spatial co-ranks now agree on `global_means`, so the
+                    # data-group reduction below leaves every rank holding the
+                    # same envelope.
                     dist.reduce_min(batch_min)
                     dist.reduce_max(batch_max)
                     self._gm_min.copy_(torch.minimum(self._gm_min, batch_min))

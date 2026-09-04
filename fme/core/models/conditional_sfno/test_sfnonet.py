@@ -718,12 +718,16 @@ def test_clip_latent_global_means_lazy_reset():
 
 @pytest.mark.parallel
 def test_clip_latent_global_means_envelope_synchronized_across_ranks():
-    """The envelope must be min/max-reduced across data-parallel ranks.
+    """The envelope must span the global means seen on every rank.
 
     Each data-parallel rank feeds a differently-scaled input, so local batch
     envelopes differ across ranks. After a training-mode forward the envelope
-    must contain the local batch means and be identical across the
+    must contain each rank's batch means and be identical across the
     data-parallel group (a further reduction must be a no-op).
+
+    The mean being tracked is the mean over the *whole* grid, so under spatial
+    parallelism it is reconstructed from the tile here too -- a tile mean is a
+    different number and need not lie inside the envelope.
     """
     torch.manual_seed(0)
     dist = Distributed.get_instance()
@@ -742,11 +746,13 @@ def test_clip_latent_global_means_envelope_synchronized_across_ranks():
         model(x_local, ctx)
     handle.remove()
     (latent,) = latents
-    local_means = latent.mean(dim=(-2, -1), keepdim=True)
+    global_means = dist.spatial_reduce_sum(latent.sum(dim=(-2, -1), keepdim=True)) / (
+        img_shape[0] * img_shape[1]
+    )
 
-    # The envelope contains every local sample's per-channel mean.
-    assert (model._gm_min <= local_means).all()
-    assert (model._gm_max >= local_means).all()
+    # The envelope contains every sample's per-channel global mean.
+    assert (model._gm_min <= global_means).all()
+    assert (model._gm_max >= global_means).all()
 
     # All ranks in the data-parallel group hold the same envelope, so a
     # further reduction is a no-op. Without the cross-rank reduction in
