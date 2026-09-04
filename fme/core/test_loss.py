@@ -762,6 +762,49 @@ def test_energy_score_preweighting_preserves_total():
     assert total > 0
 
 
+@pytest.mark.medium_duration
+def test_energy_score_component_has_no_spurious_leading_dims():
+    """The energy score component must be shaped (B, C, n_l, n_m).
+
+    `get_energy_score` consumes the ensemble dimension, so sizing
+    `mode_weights` against `x_hat` -- which still has it -- broadcasts two
+    extra leading dims onto the result. That is invisible while a
+    correctly-shaped CRPS component is also present to carry the channel
+    breakdown, and raises as soon as the energy score is the only term.
+    """
+    torch.manual_seed(0)
+    DEVICE = get_device()
+    n_lat, n_lon, n_batch, n_channels = 16, 32, 4, 3
+    pred = torch.randn(n_batch, 2, n_channels, n_lat, n_lon, device=DEVICE)
+    target = torch.randn(n_batch, 1, n_channels, n_lat, n_lon, device=DEVICE)
+    sht = LatLonOperations(torch.ones((n_lat, n_lon), device=DEVICE)).get_real_sht()
+
+    (component,) = EnergyScoreLoss(sht=sht)(pred, target)
+    assert component.loss.ndim == 4, component.loss.shape
+    assert component.loss.shape[:2] == (n_batch, n_channels)
+    assert component.reduce_to_channel().shape == (n_batch, n_channels)
+
+
+@pytest.mark.medium_duration
+def test_pure_energy_score_gives_a_per_channel_breakdown():
+    """With no CRPS term the energy score alone must still name its channels."""
+    torch.manual_seed(0)
+    DEVICE = get_device()
+    n_lat, n_lon, n_batch = 16, 32, 4
+    names = ["var_a", "var_b", "var_c"]
+    pred = torch.randn(n_batch, 2, len(names), n_lat, n_lon, device=DEVICE)
+    target = torch.randn(n_batch, 1, len(names), n_lat, n_lon, device=DEVICE)
+    sht = LatLonOperations(torch.ones((n_lat, n_lon), device=DEVICE)).get_real_sht()
+
+    components = EnergyScoreLoss(sht=sht)(pred, target)
+    channel_losses = LossOutput(components, names).get_channel_losses()
+    assert sorted(channel_losses) == sorted(names)
+    # A per-channel breakdown that is constant across channels is not a
+    # breakdown; the broadcast bug produced exactly that.
+    values = [float(channel_losses[n].loss) for n in names]
+    assert len(set(values)) == len(values), values
+
+
 def test_ensemble_component_loss_reduce_to_channel():
     """EnsembleComponentLoss reduces over non-batch, non-channel dims."""
     tensor = torch.randn(4, 3, 5, 8, 8, device=get_device())
