@@ -22,7 +22,11 @@ def get_crps(
         The CRPS loss.
     """
     n_ens = gen.shape[1]
-    epsilon = (1.0 - alpha) / 2.0
+    # Expanding aCRPS = alpha * fairCRPS + (1 - alpha) * CRPS leaves the
+    # pairwise term with a coefficient of 1 - (1 - alpha) / n_ens, so epsilon
+    # scales with the ensemble size. Fixing it at 2 is correct only for a
+    # two-member ensemble.
+    epsilon = (1.0 - alpha) / max(n_ens, 1)
 
     # Term 1: E|X - y|
     target_term = torch.mean(torch.abs(gen - target), dim=1)
