@@ -145,3 +145,41 @@ def test_conditioning_noise_is_decomposition_invariant(noise_type):
         rtol=1e-5,
         atol=1e-6,
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known defect, not introduced by spatial parallelism: every rank is "
+        "seeded identically and draws the same shape, so data-parallel ranks "
+        "produce identical conditioning noise for corresponding samples. The "
+        "realizations in a global batch are therefore correlated in groups, "
+        "and only batch_size/n_data_ranks of them are independent. Fixing it "
+        "means keying the draw on the global sample index, which changes "
+        "existing multi-rank training results and every committed baseline "
+        "for this model, so it needs an owner's decision rather than a "
+        "drive-by change. When it is fixed, drop this marker."
+    ),
+)
+@pytest.mark.parallel
+def test_data_parallel_ranks_draw_independent_noise():
+    """Ranks holding different samples should draw different noise."""
+    dist = Distributed.get_instance()
+    n_dp = dist.total_data_parallel_ranks
+    if n_dp == 1:
+        pytest.skip("needs more than one data-parallel rank")
+    spatial_size = dist.world_size // n_dp
+
+    torch.manual_seed(2)
+    local = spatial_randn((1, 2), IMG_SHAPE, device=fme.get_device())
+    assembled = dist.gather_spatial_tensor(local, IMG_SHAPE).contiguous()
+    per_rank = [torch.zeros_like(assembled) for _ in range(dist.world_size)]
+    torch.distributed.all_gather(per_rank, assembled)
+
+    # one representative rank per data group
+    first = per_rank[0]
+    for data_rank in range(1, n_dp):
+        other = per_rank[data_rank * spatial_size]
+        assert not torch.allclose(
+            first, other
+        ), f"data rank {data_rank} drew the same noise as data rank 0"
