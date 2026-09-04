@@ -24,10 +24,16 @@ smoke-testing something that is not the arm.
 
 ```bash
 ./analysis/make_smoke_config.py LG04 --years 3 --nodes 1
-srun -N1 -n1 --gpus-per-node=4 --overlap \
-  .venv/bin/torchrun --nproc-per-node 4 -m fme.ace.train \
-  $CAMPAIGN_SMOKE/lg04/config.yaml
+./analysis/run_smoke.sh $CAMPAIGN_SMOKE/lg04
 ```
+
+**Use `run_smoke.sh`.** Every smoke failure in this campaign so far has been
+the launcher rather than the arm, in three different ways, and each one looked
+like a result. Documenting them was not enough -- the second trap was hit again
+*after* being written down -- so the script does the right thing instead:
+finds a node whose GPUs are actually idle, launches through `torchrun` with
+absolute paths, defaults to a 45-minute deadline, and moves an existing passing
+log aside rather than deleting it. It refuses when no node is free.
 
 Two traps, both paid for once already:
 
@@ -35,9 +41,13 @@ Two traps, both paid for once already:
   `LOCAL_RANK`, which plain srun does not set, so all four ranks land on
   `cuda:0` and OOM. The OOM looks like the arm needing more memory; it is not.
   The giveaway is several processes listed against device 0.
-* **Pin the node with `-w`.** Two overlapping steps that each ask for all
-  four GPUs on one node will collide, and the loser dies with no traceback --
-  it just stops logging. Give each concurrent smoke run its own node.
+* **Pin the node with `-w`, and check it is genuinely idle.** Two overlapping
+  steps that each ask for all four GPUs on one node collide, and the loser dies
+  with no traceback -- it just stops logging. A different node *name* is not
+  enough: a previous smoke run may still hold it.
+* **Give it at least 30 minutes.** Dataset setup alone is 10-15 min on the
+  3-year subset. A shorter deadline kills the run before its first batch, which
+  is indistinguishable from a hang.
 * **Narrowing `subset` alone does not make it cheap.** The loader still opens
   every file the pattern matches and subsets afterwards, so setup stays at its
   full length. `make_smoke_config.py` narrows `file_pattern` to the same years
