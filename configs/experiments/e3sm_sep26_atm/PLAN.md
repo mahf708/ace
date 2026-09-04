@@ -990,3 +990,173 @@ Two operational notes bought the hard way and worth writing down:
   one.** `--override logging.log_train_every_n_batches=10` is rejected by dacite
   (`UnexpectedDataError`) at config parse, before any GPU work, which reads as a
   silent no-op in a sweep harness that only greps for step lines.
+
+---
+
+## 11. Six things measured on 2026-09-03, and what each one changed
+
+An external review of the branch at `6b74fa8` questioned what several arms
+actually isolate. Every claim below was checked by running code, not by
+reading it. Scripts are in `analysis/`, one per finding.
+
+### 11.1 Every data-parallel rank draws identical noise — CONFIRMED
+
+`set_seed` (`fme/core/rand.py:20`) gives every rank the same `torch.manual_seed`
+and `torch.cuda.manual_seed_all`. The `RandomState` machinery that would
+decorrelate them is reached only through `apply_config_seed`, which is called
+from `inference.py` and `evaluator.py` and **never from training**. So the
+conditioning noise comes from the process-global CUDA RNG, seeded identically
+everywhere.
+
+Measured at 2 ranks (`analysis/rank_noise.py`): the per-sample noise hashes are
+byte-identical across ranks, for both `isotropic` and `gaussian`.
+
+    gaussian: distinct within rank=True  identical across ranks=True  unique fields globally=2/4
+    isotropic: distinct within rank=True identical across ranks=True  unique fields globally=2/4
+
+At campaign scale this is worse than it looks. Global batch 16 over 16 ranks is
+local batch 1, so a `Mn` update contains **n unique noise fields, not 16n**.
+The estimator stays unbiased — noise is independent of the data — but batch size
+buys no noise averaging at all, and the CRPS dispersion gradient is computed
+from the same one or two latent fields for every sample in the batch.
+
+**The fix is one line, and it was tested** (`analysis/rank_noise_fix.py`):
+offset only the CUDA seed by rank. At 4 ranks, noise decorrelates and model
+init stays bit-identical across ranks, which is what DDP requires.
+
+    variant                  init identical    noise identical
+    current                  True              True
+    rank_offset_cuda_seed    True              False      <- wanted
+
+**What changed:** nothing in the run list. sep26 differences five arms against
+RF01, which is aug26's E01 trained under the current behaviour, so silently
+fixing this would break the one control the campaign inherits. It is recorded
+as upstream item B4 and as a *proposed* arm, not a taken one.
+
+### 11.2 A seed label does not pair arms across the `Z` axis — CONFIRMED, worse than suspected
+
+Building the same model at `noise_embed_dim` 0 and 32 under one seed
+(`analysis/seed_pairing.py`): the conditioning modules are constructed inline
+inside every block, so they advance the init RNG before the layers after them.
+
+    control (32 vs 32, same seed) identical: True
+    Z0 vs Z1: 22 shared tensors, 5 identical, 17 DIFFERENT   PAIRED: False
+    Z1 vs Z2: 30 shared tensors, 5 identical, 25 DIFFERENT   PAIRED: False
+
+Only 5 of 22 shared tensors survive. A different init is just another draw from
+the same distribution, so the precise consequence is:
+
+> **A contrast that changes `Z` carries a full seed's worth of noise. A contrast
+> that does not is paired and carries none.**
+
+`Z` is the only axis that touches the architecture — `D`, `G`, `M`, `N`, `Q`,
+`R`, `Y` all leave the module identical. So in the LG 2×2 the **rows are paired
+and the columns are not**.
+
+**What changed:** seeds 2 and 3 on LG01–LG03 (+1,134 node-h), and NC02 (`Z2`
+against `Z1`, a one-seed unpaired contrast) parked at priority 6.
+
+### 11.3 At `Z0` the ensemble members are bit-identical — CONFIRMED
+
+With zero noise channels the model is a deterministic function of its input and
+`broadcast_ensemble` hands every member the same input. Measured on CPU, where
+kernels are deterministic (`analysis/z0_degeneracy.py`):
+
+    max|member0 - member1| = 0.000e+00     CRPS(M=2) == MAE, exactly
+    energy-score dispersion term max = 0.000e+00
+
+**What changed:** the review proposed two `M2`/`Z0` controls. This measurement
+says one of them is worth running and the other is not:
+
+* `D0_G1_…M2…Z0` (pure CRPS) — **refused.** With identical members the pairwise
+  term is exactly zero, so this optimises bit-for-bit LG01's objective at twice
+  the cost. Now a hard blocker in `validate()` with no opt-in.
+* `D0_G0_…M2…Z0` (the 0.9/0.1 mix) — **added as LG04.** The energy score's
+  target term survives even with its dispersion term zeroed, so the objective is
+  genuinely distinct: MAE + 0.1 × a spectral L1 distance. It is the only arm
+  that asks whether the noise helps under a loss that *can* reward dispersion.
+  The wasted second member is forced by upstream: `get_energy_score` demands
+  exactly two.
+
+### 11.4 The stochastic arms start deterministic, and E01 has learned to use its noise — NEW
+
+`ConditionalLayerNorm.reset_parameters` zeroes `W_scale_2d` and `W_bias_2d` and
+sets `W_scale.bias = 1`, so at step 0 the noise pathway is an exact identity and
+**every stochastic run begins as a deterministic one.** Whether it stays that
+way is an empirical question nobody had asked.
+
+Read straight out of aug26 E01's epoch checkpoints
+(`analysis/noise_amplitude.py`). The 1σ modulation of a layer-norm scale is the
+L2 norm of that output channel's row of noise weights:
+
+| epoch | 1 | 3 | 5 | 8 | 11 | 13 |
+|---|---|---|---|---|---|---|
+| scale 1σ (mean) | 0.0277 | 0.0352 | 0.0408 | 0.0459 | 0.0488 | 0.0498 |
+| bias 1σ (mean) | 0.0288 | 0.0369 | 0.0407 | 0.0428 | 0.0435 | 0.0437 |
+
+Monotone from zero, saturating: the scale gains 41 × 10⁻⁴ between epochs 1 and
+2 but 5 × 10⁻⁴ between 12 and 13, and the bias term is flat from epoch 8. The
+typical channel ends at **±5.0%** and the most strongly conditioned channel at
+±30%, across all 16 blocks.
+
+So the noise pathway is real, it is used, and it is essentially converged well
+inside 30 epochs. That is reassuring for the epoch budget and it is a cheap
+per-epoch telemetry worth logging for every `Z1` arm: an arm whose noise weights
+stay at zero has quietly become a deterministic model.
+
+### 11.5 The energy score is per-coefficient marginal, not joint — CONFIRMED
+
+`get_energy_score` applies a complex modulus at each spherical-harmonic
+coefficient independently; nothing couples modes or channels in a norm. Measured
+(`analysis/loss_semantics.py`) by permuting which member holds which value
+independently at each (channel, mode) — an operation that preserves every
+per-coefficient marginal and destroys the cross-coefficient dependence:
+
+    score(original) = 305.4745483398
+    score(swapped)  = 305.4745483398     <- bit-identical, elementwise
+    a true joint ES with an L2 norm over all modes: 9.1198 vs 9.1367 (differs)
+
+The score is invariant to arbitrary per-coefficient member relabelling, so it
+cannot see cross-mode phase organisation or cross-channel dependence at all.
+
+**What changed:** the `G` axis is documented as "how much weight on a per-mode
+spectral score", not "joint energy scoring", and OI01's note says the two terms
+are not on a common scale. No arm was dropped: the question `G` asks is still a
+real one, it just is not the one the name implied.
+
+### 11.6 Almost-fair CRPS is only almost-fair at two members — CONFIRMED
+
+`get_crps` hard-codes `epsilon = (1 - alpha) / 2`. AIFS-CRPS (arXiv:2412.15832)
+defines it as `(1 - alpha) / M`. Against the analytic definition:
+
+| M | 2 | 3 | 4 |
+|---|---|---|---|
+| relative error at α=0.95 | 0 (exact) | 0.89% | 1.16% |
+
+OI04 is `M2`, so it is valid as written. **What changed:** `validate()` and
+`check_campaign.py` now refuse `Y1` anywhere but `M2`, so the arm cannot be
+extended onto the member sweep without someone noticing.
+
+### What the review got right that is now fixed in the docs, not the runs
+
+* `LG02−LG01` and `LG03−RF02` are the noise **simple effects** under MAE and
+  under MSE. Their difference is the loss-by-noise interaction. Calling them
+  "two independent estimates of the noise main effect" assumed that interaction
+  away; the note now says so.
+* `Q` is **multiscale finite-difference CRPS** on array-index increments, not
+  the spatially pooled CRPS of Alet et al. It also adds 0.1 on top of a 1.0
+  objective, so its weights sum to 1.1. Renamed in every table; the Alet
+  attribution is gone.
+* `R1` is a **detached** two-step rollout with only the terminal state scored;
+  `R2` scores both and **sums** them, raising the objective scale. Neither is
+  backpropagation through time. Both notes now say this, and RO02's says to
+  normalise before reading it.
+* The template's "12-year trajectory" comment is wrong: `n_forward_steps: 7300`
+  at 6-hourly is 5 years.
+
+### What the review got wrong
+
+* The second `M2`/`Z0` control is degenerate, not merely wasteful — see 11.3.
+* `Q3` does not "triple the auxiliary weight" and the review's own text
+  half-concedes this: `FiniteDifferenceCRPSLoss.forward` returns
+  `result / self.levels`, so Q3 spreads one 0.1 across three scales.

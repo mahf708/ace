@@ -175,6 +175,13 @@ def check(path: pathlib.Path) -> list[str]:
     )
     # Isotropic noise at zero channels calls an inverse SHT on a zero-channel
     # tensor and dies in the MKL FFT, so Z0 must carry the type too.
+    # Z0 draws a zero-channel noise tensor, so neither type exists; a word
+    # claiming N1 there would name a setting with no effect.
+    want(
+        not (noise == 0 and levels["N"] != BASELINE["N"]),
+        f"N{levels['N']} with Z0: no noise of either type is drawn, so the "
+        f"token claims a setting that has no effect",
+    )
     want_type = NOISE_TYPE_AT_ZERO if noise == 0 else NOISE_TYPE[levels["N"]]
     want(
         builder["noise_type"] == want_type,
@@ -257,6 +264,27 @@ def check(path: pathlib.Path) -> list[str]:
                 f"Y{levels['Y']} but almost_fair_crps_alpha is "
                 f"{kwargs.get('almost_fair_crps_alpha')}",
             )
+            # BLOCKER 4 -- get_crps hard-codes epsilon = (1-alpha)/2, which is
+            # the AIFS almost-fair definition only at two members.  MEASURED
+            # 0.89% out at M3, 1.16% at M4.
+            want(
+                MEMBERS[levels["M"]] == 2,
+                f"Y{levels['Y']} at M{levels['M']}: epsilon is hard-coded to "
+                f"(1-alpha)/2, so this is not almost-fair CRPS at "
+                f"{MEMBERS[levels['M']]} members",
+            )
+        # BLOCKER 3 -- with no noise channels the members are bit-identical, so
+        # a pure-CRPS objective at M>1 is the M1 objective at M times the cost.
+        want(
+            not (
+                NOISE_DIM[levels["Z"]] == 0
+                and energy_w == 0.0
+                and MEMBERS[levels["M"]] != 1
+            ),
+            f"M{levels['M']} with Z0 and G{levels['G']}: the members are "
+            f"bit-identical, so this is the M1 objective at "
+            f"{MEMBERS[levels['M']]}x the cost",
+        )
 
     # -- sizing --------------------------------------------------------------
     batch = d["train_loader"]["batch_size"]

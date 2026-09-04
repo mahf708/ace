@@ -13,10 +13,11 @@ load-bearing rather than decorative.
 import copy
 import pathlib
 
-import check_campaign as chk
-import make_campaign as mk
 import pytest
 import yaml
+
+import check_campaign as chk
+import make_campaign as mk
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -247,13 +248,64 @@ def test_one_configuration_gets_one_experiment_id():
 
 
 def test_zero_noise_forces_gaussian():
-    """Isotropic at zero channels dies in the MKL FFT; aug26 reproduced it."""
-    for n in ("0", "1"):
-        builder = _built(G="1", M="1", Z="0", N=n)["stepper"]["step"]["config"][
-            "builder"
-        ]
-        assert builder["config"]["noise_embed_dim"] == 0
-        assert builder["config"]["noise_type"] == "gaussian"
+    """Isotropic at zero channels dies in the MKL FFT; aug26 reproduced it.
+
+    So Z0 resolves the builder to gaussian even though the word says N0
+    (isotropic). The token is inert rather than wrong: no noise of either
+    type is drawn from a zero-channel tensor.
+    """
+    builder = _built(G="1", M="1", Z="0")["stepper"]["step"]["config"]["builder"]
+    assert builder["config"]["noise_embed_dim"] == 0
+    assert builder["config"]["noise_type"] == "gaussian"
+
+
+def test_non_default_noise_type_at_zero_width_is_refused():
+    """N1 at Z0 would name a setting that has no effect, so it is not a word."""
+    with pytest.raises(mk.ConfigError, match="no noise of either type is drawn"):
+        _built(G="1", M="1", Z="0", N="1")
+
+
+def test_pure_crps_with_identical_members_is_refused():
+    """MEASURED: at Z0 the members are bit-identical, so CRPS is exactly MAE
+    and the extra members buy nothing at all (analysis/z0_degeneracy.py)."""
+    for m in ("2", "3"):
+        with pytest.raises(mk.ConfigError, match="bit-identical"):
+            _built(G="1", M=m, Z="0")
+
+
+def test_almost_fair_alpha_is_refused_away_from_two_members():
+    """get_crps hard-codes epsilon = (1-alpha)/2, which is the almost-fair
+    definition only at M2 (MEASURED 0.89% out at M3)."""
+    for m in ("1", "3"):
+        with pytest.raises(mk.ConfigError, match="almost-fair definition only"):
+            _built(G="1", M=m, Y="1")
+    _built(Y="1")  # M2 is the template's level, and is fine
+
+
+def test_checker_catches_a_lying_alpha_at_three_members(tmp_path):
+    """The checker must reach BLOCKER 4 on its own, not by importing it."""
+    run = _run(G="1", M="3")
+    config = _built(G="1", M="3")
+    config["stepper_training"]["loss"]["kwargs"]["almost_fair_crps_alpha"] = 0.95
+    runid = run.runid.replace("_Y0_", "_Y1_")
+    assert any("almost-fair" in c for c in _check_written(tmp_path, config, runid))
+
+
+def test_checker_catches_bit_identical_members(tmp_path):
+    """Mutation: relabel an M1/Z0 run as M2 and the checker must object."""
+    config = _built(G="1", M="1", Z="0")
+    config["stepper_training"]["n_ensemble"] = 2
+    runid = _run(G="1", M="1", Z="0").runid.replace("_M1_", "_M2_")
+    assert any("bit-identical" in c for c in _check_written(tmp_path, config, runid))
+
+
+def test_checker_catches_an_inert_noise_type_token(tmp_path):
+    """Mutation: relabel a Z0 run as N1, which cannot mean anything there."""
+    config = _built(G="1", M="1", Z="0")
+    runid = _run(G="1", M="1", Z="0").runid.replace("_N0_", "_N1_")
+    assert any(
+        "no noise of either type" in c for c in _check_written(tmp_path, config, runid)
+    )
 
 
 def test_mse_drops_the_ensemble_kwargs_entirely():

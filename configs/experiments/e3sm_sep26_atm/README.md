@@ -4,8 +4,9 @@ An ablation of the **training objective** for the ACE2S atmosphere. Everything
 else — channels, batch size, learning rate, loss weighting, data — is held at
 the aug26 E01 tuning set.
 
-**19 runs · 76 nodes concurrent · 5,741 node-hours · 137 h critical path.**
-Built, checked, validated. Nothing queued.
+**26 runs · 104 nodes concurrent · 6,230 node-hours to P5 · 137 h critical
+path.** Three more arms are parked at P6 (967 node-h) with a stated
+precondition each. Built, checked, validated. Nothing queued.
 
 W&B project **`ACE2S-sep26-atm`** (entity `e3sm-aig`) — its own, not
 `SamudrACE-E3SMv3`.
@@ -36,13 +37,13 @@ never renames a run.
 | pos | axis | levels |
 |---|---|---|
 | `D` | objective | `D0` EnsembleLoss · `D1` MSE |
-| `G` | crps/energy split | `G0` .9/.1 · `G1` 1/0 · `G2` 0/1 · `G3` .5/.5 |
+| `G` | crps / **per-mode** spectral score | `G0` .9/.1 · `G1` 1/0 · `G2` 0/1 · `G3` .5/.5 |
 | `I` | init | `I0` scratch · `I1` warm start |
 | `M` | members | `M1` `M2` `M3` |
 | `N` | noise type | `N0` isotropic · `N1` gaussian |
-| `Q` | pooled CRPS levels | `Q0` off · `Q1` · `Q3` (weight 0.1) |
-| `R` | rollout | `R0` 1 step · `R1` 2 last-only · `R2` 2 both · `R3` ≤4 sampled · `R4` ≤20 sampled |
-| `Y` | almost-fair alpha | `Y0` 1.00 · `Y1` 0.95 |
+| `Q` | multiscale FD-CRPS levels | `Q0` off · `Q1` · `Q3` (weight 0.1, split across levels) |
+| `R` | rollout | `R0` 1 step · `R1` 2 detached, last scored · `R2` 2 detached, both scored & summed · `R3` ≤4 sampled · `R4` ≤20 sampled |
+| `Y` | almost-fair alpha | `Y0` 1.00 · `Y1` 0.95 (**`M2` only**) |
 | `Z` | noise dim | `Z0` 0 · `Z1` 32 · `Z2` 64 |
 
 Template word: `D0_G0_I0_M2_N0_Q0_R0_Y0_Z1`.
@@ -66,39 +67,56 @@ So "every `M1` run" is a tag filter, not a regex.
 |---|---|---|---|---|---|
 | **RF01** | `D0_G0_I0_M2_N0_Q0_R0_Y0_Z1` | — | **0** | — | stochastic pole = **aug26 E01, inherited, 3 seeds** |
 | **RF02** ×3 | `D1_G0_I0_M1_N0_Q0_R0_Y0_Z0` | 0.48 | 567 | 1 | deterministic pole — MSE, 1 member, no noise |
-| LG01 | `D0_G1_…M1…Z0` | 0.48 | 189 | 2 | MAE vs MSE, no noise either side |
-| LG02 | `D0_G1_…M1…Z1` | 0.48 | 189 | 2 | noise under MAE; M1 of the member sweep |
-| LG03 | `D1_…M1…Z1` | 0.48 | 189 | 2 | noise under MSE |
-| EN01 | `D0_G1_…M2…` | 1.00 | 322 | 2 | pure CRPS at 2 members; what the 0.1 energy term buys |
+| LG01 ×3 | `D0_G1_…M1…Z0` | 0.48 | 567 | 2 | MAE vs MSE, no noise either side. **Paired** with RF02 |
+| LG02 ×3 | `D0_G1_…M1…Z1` | 0.48 | 567 | 2 | noise under MAE; M1 of the member sweep |
+| LG03 ×3 | `D1_…M1…Z1` | 0.48 | 567 | 2 | noise under MSE |
+| LG04 | `…M2…Z0` | 1.00 | 322 | 2 | RF01's objective, noise pathway removed — **not yet smoke-tested** |
+| EN01 | `D0_G1_…M2…` | 1.00 | 322 | 2 | pure CRPS at 2 members; what the 0.1 spectral term buys |
 | NC01 | `…N1…` | 1.00 | 322 | 3 | gaussian vs isotropic noise |
-| OI02 | `…Q1…` | 1.00 | 322 | 3 | spatially pooled CRPS |
+| OI02 | `…Q1…` | 1.00 | 322 | 3 | multiscale increment CRPS |
 | RO01 | `…R1…` | 1.21 | 376 | 3 | rollout length alone |
 | EN02 | `D0_G1_…M3…` | 1.44 | 433 | 4 | three members |
 | OI01 | `…G3…` | 1.00 | 322 | 4 | 0.5/0.5 split — third point on the trade-off |
 | OI04 | `…Y1…` | 1.00 | 322 | 4 | almost-fair CRPS |
 | RO02 | `…R2…` | 1.89 | 549 | 4 | the second *scored* step |
 | RO03 | `D1_…M1…R1…Z0` | 0.58 | 215 | 4 | rollout on the deterministic row |
-| CU01 | `…I1…` | 1.00 | 322 | 5 | warm start from RF02 |
-| NC02 | `…Z2…` | 1.00 | 322 | 5 | noise dim 64 |
-| OI03 | `…Q3…` | 1.00 | 322 | 5 | three coarsening levels |
 | RO04 | `…R4…` | 1.52 | 455 | 5 | sampled rollout to 20 steps |
+| ~~CU01~~ | `…I1…` | 1.00 | 322 | 6 | warm start from RF02 — **parked**, compute-confounded |
+| ~~NC02~~ | `…Z2…` | 1.00 | 322 | 6 | noise dim 64 — **parked**, unpaired at one seed |
+| ~~OI03~~ | `…Q3…` | 1.00 | 322 | 6 | three levels — **parked**, weak contrast by construction |
 
-Priorities drain reference → mechanism → single-factor → tail:
-P1 567, P2 890, P3 1,021, P4 1,841, P5 1,422 node-hours.
+P1 567, P2 2,347, P3 1,021, P4 1,841, P5 455, **P6 967 (parked)**.
+`submit-campaign.sh` caps at P3 by default; P6 needs an explicit
+`--max-priority 6` and each arm's `.env` carries the reason it is parked.
 
-**The LG block is a 2×2.** RF01−RF02 moves loss family, noise conditioning and
-member count at once. Holding members at one and crossing the other two gives:
+### The LG block is a 2×2, and only its rows are paired
+
+RF01−RF02 moves loss family, noise conditioning and member count at once.
+Holding members at one and crossing the other two gives:
 
 | | no noise (`Z0`) | noise wired (`Z1`) |
 |---|---|---|
 | **MSE** | RF02 | LG03 |
 | **MAE** (`G1` at `M1`) | LG01 | LG02 |
 
-At one member the CRPS pairwise term is zero, so the `D0` row is MAE. Row =
-loss geometry, column = noise conditioning with nothing rewarding it. LG03−RF02
-and LG02−LG01 are two independent estimates of the noise main effect.
+At one member the CRPS pairwise term is exactly zero, so the `D0` row is MAE
+(verified to the bit). Row = loss geometry, column = noise conditioning.
 
----
+Two things to read carefully:
+
+* **LG03−RF02 and LG02−LG01 are the noise *simple effects*** under MSE and
+  under MAE. Their difference is the loss-by-noise interaction. They are not
+  two draws of one number.
+* **The columns are not paired.** Changing `Z` reshuffles the whole
+  initialisation stream — only 5 of 22 shared tensors survive a `Z` change at a
+  fixed seed (`analysis/seed_pairing.py`). So a `Z` contrast carries a full
+  seed's worth of noise and a loss contrast carries none. That is why LG01–LG03
+  have three seeds and why NC02 is parked.
+* **Nothing in this 2×2 rewards ensemble spread.** At `M1` MAE and MSE both
+  want a point estimate, so the block tests whether the noise pathway *harms*
+  point skill or acts as a regulariser — not whether it produces useful
+  uncertainty. **LG04 is the arm that asks that**, at `M2` under the 0.9/0.1
+  objective.
 
 ## Running it
 

@@ -92,14 +92,39 @@ OBJECTIVE = {"0": "EnsembleLoss", "1": "MSE"}  # D
 # G -- (crps_weight, energy_score_weight).  The energy score is taken in
 # spectral space through an SHT, so G2 is a different objective in a different
 # basis rather than a reweighting of G0.
+#
+# It is NOT the textbook multivariate energy score.  get_energy_score applies a
+# complex modulus at EACH spherical-harmonic coefficient independently and the
+# loss averages over coefficients, so it is a sum of per-coefficient marginal
+# (bivariate) energy scores.  MEASURED: permuting which member holds which
+# value independently at each (channel, mode) leaves the score BIT-IDENTICAL,
+# while a true joint score with an L2 norm over all modes moves by 0.19%
+# (analysis/loss_semantics.py).  It cannot see cross-mode or cross-channel
+# dependence.  Read G as "how much per-mode spectral score", not "joint".
 SPLIT = {"0": (0.9, 0.1), "1": (1.0, 0.0), "2": (0.0, 1.0), "3": (0.5, 0.5)}
 INIT = {"0": "scratch", "1": "warm"}  # I
 MEMBERS = {"1": 1, "2": 2, "3": 3}  # M
 NOISE_TYPE = {"0": "isotropic", "1": "gaussian"}  # N
-FDCRPS = {"0": 0, "1": 1, "3": 3}  # Q -- levels, at FDCRPS_WEIGHT
+# Q -- multiscale finite-difference CRPS levels, at FDCRPS_WEIGHT.  NOT
+# "spatially pooled CRPS": _get_finite_difference_crps_loss takes CRPS of the
+# lat and lon ARRAY-INDEX differences, then avg_pool2d by 2 and recurses.  It
+# scores grid texture, not an area-weighted physical length scale, and
+# FiniteDifferenceCRPSLoss divides by `levels`, so Q3 spreads the same 0.1
+# across three scales rather than tripling it.
+FDCRPS = {"0": 0, "1": 1, "3": 3}
 FDCRPS_WEIGHT = 0.1
-# R -- (n_forward_steps, optimize_last_step_only).  optimize_last_step_only runs
-# the unscored steps under torch.no_grad.
+# R -- (n_forward_steps, optimize_last_step_only).
+#
+# NONE of these is backpropagation through time.  optimize_last_step_only runs
+# the unscored steps under torch.no_grad (single_module.py:1706), and with
+# use_gradient_accumulation (which the template sets) predict_generator detaches
+# the state between every step (single_module.py:1167) and accumulate_loss
+# backwards each step separately.  So:
+#   R1  two steps, first DETACHED under no_grad, only the 12 h state scored
+#   R2  two steps, both scored, losses SUMMED (not averaged) over the two
+#       horizons, gradients never crossing the step boundary
+# R2 - R1 therefore adds the 6 h loss on top of the 12 h one and raises the
+# total objective scale; it is not "the second scored step" in isolation.
 ROLLOUT: dict[str, tuple[int | dict[int, float], bool]] = {
     "0": (1, True),
     "1": (2, True),
@@ -107,7 +132,12 @@ ROLLOUT: dict[str, tuple[int | dict[int, float], bool]] = {
     "3": ({1: 0.6, 2: 0.2, 4: 0.2}, True),
     "4": ({1: 0.6, 2: 0.2, 4: 0.1, 12: 0.05, 20: 0.05}, True),
 }
-ALPHA = {"0": 1.0, "1": 0.95}  # Y -- almost_fair_crps_alpha
+# Y -- almost_fair_crps_alpha.  get_crps uses epsilon = (1 - alpha) / 2, but
+# AIFS-CRPS (arXiv:2412.15832) defines it as (1 - alpha) / n_ensemble.  The two
+# agree only at M2.  MEASURED against the analytic definition: exact at M2, off
+# by 0.89% at M3 and 1.16% at M4 (analysis/loss_semantics.py).  validate()
+# therefore refuses Y1 anywhere but M2.
+ALPHA = {"0": 1.0, "1": 0.95}
 NOISE_DIM = {"0": 0, "1": 32, "2": 64}  # Z
 
 POSITIONS = ("D", "G", "I", "M", "N", "Q", "R", "Y", "Z")
@@ -315,22 +345,39 @@ RUNLIST: list[Experiment] = [
     Experiment(
         "LG01",
         Word.of(G="1", M="1", Z="0"),
-        "MAE, no noise. Against RF02 this is loss geometry alone",
+        "MAE, no noise. LG01-RF02 is loss geometry alone, and it is PAIRED: "
+        "neither arm changes the architecture, so both start from the same "
+        "weights at a given seed",
+        seeds=(1, 2, 3),
         priority=2,
         allow_degenerate=True,
     ),
     Experiment(
         "LG02",
         Word.of(G="1", M="1"),
-        "MAE with noise wired. Also M1 of the pure-CRPS member sweep",
+        "MAE with noise wired. Also M1 of the pure-CRPS member sweep. Unpaired "
+        "against LG01 -- adding the Z axis reshuffles the whole init stream",
+        seeds=(1, 2, 3),
         priority=2,
         allow_degenerate=True,
     ),
     Experiment(
         "LG03",
         Word.of(D="1", M="1"),
-        "MSE with noise wired. LG03-RF02 and LG02-LG01 are two independent "
-        "estimates of the noise main effect",
+        "MSE with noise wired. LG03-RF02 and LG02-LG01 are the noise SIMPLE "
+        "EFFECTS under MSE and under MAE, not two draws of one main effect; "
+        "their difference is the loss-by-noise interaction",
+        seeds=(1, 2, 3),
+        priority=2,
+        allow_degenerate=True,
+    ),
+    Experiment(
+        "LG04",
+        Word.of(Z="0"),
+        "RF01's own objective with the noise pathway removed. The one control "
+        "that asks whether the noise helps under a loss that can reward "
+        "dispersion -- the rest of the LG block sits at M1, where CRPS is "
+        "exactly MAE and nothing rewards spread",
         priority=2,
         allow_degenerate=True,
     ),
@@ -359,47 +406,63 @@ RUNLIST: list[Experiment] = [
     Experiment(
         "NC02",
         Word.of(Z="2"),
-        "noise_embed_dim 64 against the template's 32",
-        priority=5,
+        "noise_embed_dim 64 against the template's 32. PARKED at priority 6: "
+        "Z2 doubles the conditioning convs' input width, so it moves capacity "
+        "as well as latent width, and the Z axis is unpaired across seeds "
+        "(only 5 of 22 shared tensors survive a Z change at a fixed seed), so "
+        "one seed cannot separate the effect from the reshuffled init. Needs a "
+        "fixed-architecture noise_scale knob upstream first",
+        priority=6,
     ),
     # -- objective internals -------------------------------------------------
     Experiment(
         "OI01",
         Word.of(G="3"),
         "crps/energy at 0.5/0.5. With RF01 (0.9/0.1) and EN01 (1.0/0.0) this "
-        "gives three points on the split, so the trade-off has a shape",
+        "gives three points on the split. The two terms are not on a common "
+        "scale, so equal coefficients are not an equal contribution",
         priority=4,
     ),
     Experiment(
         "OI02",
         Word.of(Q="1"),
-        "spatially pooled CRPS (Alet et al. 2025) at one coarsening level",
+        "multiscale finite-difference CRPS at one level. NOT the pooled CRPS of "
+        "Alet et al. -- this scores lat/lon index increments, and it adds 0.1 "
+        "ON TOP of a 1.0 objective, so its component weights sum to 1.1",
         priority=3,
     ),
     Experiment(
         "OI03",
         Word.of(Q="3"),
-        "three coarsening levels; measured to cost the same as one",
-        priority=5,
+        "three coarsening levels. FiniteDifferenceCRPSLoss divides by levels, so "
+        "this spreads the same 0.1 over three scales rather than tripling it. "
+        "PARKED at priority 6: a weak contrast against OI02 by construction, "
+        "and worth defining on an area-weighted physical scale first",
+        priority=6,
     ),
     Experiment(
         "OI04",
         Word.of(Y="1"),
-        "almost-fair CRPS at alpha 0.95. At two members the pairwise term is a "
-        "single pair, which is where this is supposed to pay",
+        "almost-fair CRPS at alpha 0.95. Only valid at M2: get_crps uses "
+        "epsilon (1-alpha)/2 where AIFS defines (1-alpha)/M, and those agree "
+        "only at two members",
         priority=4,
     ),
     # -- rollout -------------------------------------------------------------
     Experiment(
         "RO01",
         Word.of(R="1"),
-        "two steps, one scored. Against RF01 this is rollout length alone",
+        "two steps, the first detached under no_grad, only the 12 h state scored. "
+        "Against RF01 this moves the scored lead AND the input distribution "
+        "(analysed states -> the model's own 6 h states)",
         priority=3,
     ),
     Experiment(
         "RO02",
         Word.of(R="2"),
-        "two steps, both scored. RO02-RO01 is the second scored step alone",
+        "two steps, both scored, losses summed. RO02-RO01 adds the 6 h loss to "
+        "the 12 h one, so it also raises the objective scale -- read it with "
+        "that confound, or normalise by the scored-step count first",
         priority=4,
     ),
     Experiment(
@@ -412,7 +475,9 @@ RUNLIST: list[Experiment] = [
     Experiment(
         "RO04",
         Word.of(R="4"),
-        "sampled rollout to 20 steps",
+        "sampled rollout to 20 steps. The expected horizon is 3.0 steps and only "
+        "5% of batches reach 20, so this is mostly short training with a thin "
+        "long tail, not a long-rollout arm",
         priority=5,
     ),
     # -- curriculum ----------------------------------------------------------
@@ -420,9 +485,13 @@ RUNLIST: list[Experiment] = [
         "CU01",
         Word.of(I="1"),
         "the template objective, warm-started from RF02's deterministic "
-        "weights. Serialized behind RF02",
+        "weights. Serialized behind RF02. PARKED at priority 6: against RF01 "
+        "it moves pretraining, 30 extra epochs of total training, the "
+        "architecture, the objective, the member count, and fresh optimizer "
+        "and EMA state all at once. It needs a 60-epoch stochastic-from-"
+        "scratch control and a deterministic 30+30 restart to mean anything",
         warm_start_from="RF02",
-        priority=5,
+        priority=6,
     ),
 ]
 
@@ -510,13 +579,54 @@ def validate(run: Run) -> list[str]:
             f"parent would be recorded and then not used",
         )
 
+    # BLOCKER 3.  With Z0 there are no noise channels, so the model is a
+    # deterministic function of its input and broadcast_ensemble hands every
+    # member the same input: the members come out BIT-IDENTICAL.  MEASURED on
+    # CPU, where kernels are deterministic: max|member0 - member1| is exactly
+    # 0.0, CRPS(M=2) equals MAE to the last bit, and the energy score's
+    # dispersion term is exactly zero (analysis/z0_degeneracy.py).
+    #
+    # So pure CRPS (energy_w == 0) at Z0 with more than one member optimises
+    # bit-for-bit the same objective as its M1 twin at M times the cost.  There
+    # is no opt-in for this one: it buys literally nothing.
+    want(
+        not (ensemble and z == "0" and energy_w == 0.0 and m != "1"),
+        f"M{m} with Z0 and G{g}: no noise channels means the members are "
+        f"bit-identical, so the pairwise CRPS term is exactly zero and this is "
+        f"the M1 arm's objective at {m}x the cost. Use M1",
+    )
+
+    # N is inert at Z0 -- a zero-channel noise tensor is drawn no matter what
+    # the type says -- so a word claiming N1 there would be a lie.  (Z0 also
+    # forces the builder to gaussian: isotropic at zero channels dies in the
+    # MKL FFT.)
+    want(
+        not (z == "0" and w.get("N") != BASELINE["N"]),
+        f"N{w.get('N')} with Z0: there are no noise channels, so no noise of "
+        f"either type is drawn and the token would claim a setting that has no "
+        f"effect. Leave N at {BASELINE['N']}",
+    )
+
+    # almost_fair_crps_alpha's epsilon is (1-alpha)/2 in get_crps but
+    # (1-alpha)/n_ensemble in AIFS-CRPS.  Exact at M2; 0.89% out at M3 and 1.16%
+    # at M4 (MEASURED, analysis/loss_semantics.py).  Refuse the arms where the
+    # implementation does not compute what the run id names.
+    want(
+        not (ensemble and y != BASELINE["Y"] and m != "2"),
+        f"Y{y} at M{m}: get_crps hard-codes epsilon = (1-alpha)/2, which is "
+        f"the almost-fair definition only at two members. At M{m} the run would "
+        f"not be computing almost-fair CRPS at all",
+    )
+
     # Two waste guards.  Both are right about the waste, and the LG block
     # deliberately spends it, so they are gated on an explicit opt-in that
     # reaches the artifacts rather than deleted.
     if ensemble and z == "0" and not run.experiment.allow_degenerate:
         bad.append(
-            f"{run.runid}: Z0 with D0 scores a degenerate ensemble at full "
-            f"ensemble cost. Set allow_degenerate=True if that is the point"
+            f"{run.runid}: Z0 with D0 scores a degenerate ensemble -- the "
+            f"members are bit-identical, so CRPS collapses to MAE and the "
+            f"energy score to a spectral L1 distance. Set allow_degenerate="
+            f"True if that is the point"
         )
     if not ensemble and m == "1" and z != "0" and not run.experiment.allow_degenerate:
         bad.append(
