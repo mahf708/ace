@@ -618,14 +618,19 @@ class EnergyScoreLoss(torch.nn.Module):
         if self.scaling is None:
             self.scaling = 2 * (n_l * n_m) ** 0.5
             self.n_spectral = n_l * n_m
+        es = get_energy_score(x_hat, y_hat)
         if self.mode_weights is None:
+            # Size the weights against the SCORE, not against x_hat:
+            # get_energy_score has already consumed the ensemble dimension, so
+            # x_hat.ndim is one too many and broadcasts spurious leading dims
+            # onto the result.
             self.mode_weights = 2 * torch.ones(
-                (*([1] * (x_hat.ndim - 1)), n_l, n_m),
-                device=x_hat.device,
+                (*([1] * (es.ndim - 2)), n_l, n_m),
+                device=es.device,
             )
             self.mode_weights[..., 0] = 1
         assert self.n_spectral is not None
-        es = get_energy_score(x_hat, y_hat) * self.mode_weights
+        es = es * self.mode_weights
         if self._whitening is not None:
             es = es * self._whitening.factor(y_hat)
         # Old path: .sum(dim=(-2,-1)).mean() / scaling
