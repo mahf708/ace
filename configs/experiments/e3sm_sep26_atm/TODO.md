@@ -29,9 +29,8 @@ present those comparisons — this affects aug26, which is running now.
 
 ## B. Upstream `ai2cm/ace` PRs — each its own branch
 
-**B1, B2 and B5 are written, tested and committed** on branches off `main` in
-a worktree at `$PSCRATCH/ace-fixes`. Each was red-then-green: the test fails on
-`main` and passes with the fix.
+**B1, B2 and B5 are fixed, and now cherry-picked ONTO THIS BRANCH.** They also
+sit on branches off `main`, pushed to the fork for upstream review:
 
 | branch | item | tests |
 |---|---|---|
@@ -39,18 +38,20 @@ a worktree at `$PSCRATCH/ace-fixes`. Each was red-then-green: the test fails on
 | `fix/energy-score-mode-weights-shape` | B1 | red 2, green 93/93 `test_loss.py` |
 | `feature/energy-score-any-ensemble-size` | B2 | red at M1/M3/M5, green 9/9 |
 
-**They do not unblock the campaign yet.** They sit on `main`; sep26 runs from
-`e3sm/exps/hist-v2026.8.0`. Portability was **tested, not assumed** -- each
-commit was cherry-picked onto the campaign base:
+Porting them changes **no arm in the current run list**, which is why it was
+safe to do under a campaign that differences against an inherited RF01:
 
-* each one **alone: clean**, `loss.py`'s divergence notwithstanding;
-* **all three in sequence: B5 then B2 conflict in `fme/core/test_ensemble.py`**
-  and nowhere else, because both append their tests to the end of the same
-  file. Keep both blocks; the sources merge untouched.
+* **B5** is inert here. The only `Y1` arm is OI04, at `M2`, where the old
+  `(1-alpha)/2` and the new `(1-alpha)/M` are the same number. Everything else
+  runs at alpha 1.0, where epsilon is 0 either way.
+* **B2** is bit-identical at `M2`, pinned at zero tolerance, and no arm has
+  `M != 2` with an energy weight.
+* **B1** leaves the scalar total bit-identical -- re-verified at
+  11.936110496520996 before and after -- and only repairs the per-channel
+  breakdown.
 
-Until someone ports them, `validate()`'s blockers stay in force and `G2`,
-`M1`/`M3`-with-energy and `Y1`-away-from-`M2` remain refused. That is the
-correct state: the campaign must not depend on unmerged branches.
+The 86 loss/ensemble tests and 68 campaign tests pass on the branch with all
+three applied.
 
 ### B1. `EnergyScoreLoss` mode_weights shape — DONE, on a branch
 ```
