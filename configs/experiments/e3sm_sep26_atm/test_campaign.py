@@ -14,7 +14,11 @@ import copy
 import pathlib
 
 import pytest
+import torch
 import yaml
+from fme.core.ensemble import get_crps, get_energy_score
+from fme.core.gridded_ops import LatLonOperations
+from fme.core.loss import EnsembleLoss, LossOutput
 
 import check_campaign as chk
 import make_campaign as mk
@@ -436,3 +440,92 @@ def test_checker_catches_a_warm_start_that_lost_its_placeholder(tmp_path):
     broken = copy.deepcopy(config)
     del broken["stepper_training"]["parameter_init"]
     assert any("I1 but" in c for c in _check_written(tmp_path, broken, runid))
+
+
+# ---------------------------------------------- RF01 loss-code comparability --
+#
+# RF01 is inherited: it is aug26's E01, trained before B1/B2/B5 were ported onto
+# this branch. check_rf01_claim() asserts the CONFIG still matches, but the loss
+# CODE changed underneath it, and a config check cannot see that. These pin the
+# numerical claim that made the port safe -- that all three fixes are inert for
+# RF01's exact settings (EnsembleLoss 0.9/0.1, two members, alpha 1.0).
+#
+# NOTE ON WHAT THESE DO AND DO NOT GUARD. The two epsilon tests deliberately do
+# NOT fail if B5 is reverted: they assert values at alpha 1.0 and at M2, which
+# is exactly where the old and new definitions agree. That is the claim being
+# pinned -- the port could not have moved this campaign -- not the fix. The fix
+# itself is guarded upstream by
+# fme/core/test_ensemble.py::test_almost_fair_crps_matches_its_definition,
+# which fails at M3 and M5 without it. Mutation-checked 2026-09-03: reverting
+# B2's normalisation or B1's ndim DOES fail the two tests below.
+
+
+def _rf01_loss_inputs():
+    """A fixed synthetic batch shaped like RF01's: two members, 3 channels."""
+    torch.manual_seed(0)
+    gen = torch.randn(4, 2, 3, 8, 16)
+    target = torch.randn(4, 1, 3, 8, 16)
+    return gen, target
+
+
+@pytest.mark.parametrize("n_ensemble", [2, 3])
+def test_almost_fair_epsilon_is_inert_at_alpha_one(n_ensemble):
+    """B5 changed epsilon to (1-alpha)/M. Every arm but OI04 runs at alpha 1.0,
+    where epsilon is zero and CRPS is the plain fair estimator -- so the change
+    cannot have moved them, at any ensemble size."""
+    torch.manual_seed(0)
+    gen = torch.randn(16, n_ensemble, 6)
+    target = torch.randn(16, 1, 6)
+    ordered_pairs = sum(
+        (gen[:, i] - gen[:, j]).abs()
+        for i in range(n_ensemble)
+        for j in range(n_ensemble)
+        if i != j
+    )
+    fair = (gen - target).abs().mean(dim=1) - ordered_pairs / (
+        2 * n_ensemble * (n_ensemble - 1)
+    )
+    torch.testing.assert_close(get_crps(gen, target, alpha=1.0), fair)
+
+
+def test_almost_fair_epsilon_agrees_with_the_old_constant_at_two_members():
+    """OI04 is the one alpha != 1 arm, and it runs at M2, where the old
+    hard-coded (1-alpha)/2 and the new (1-alpha)/M are the same number."""
+    torch.manual_seed(0)
+    gen, target = torch.randn(16, 2, 6), torch.randn(16, 1, 6)
+    alpha = 0.95
+    old_epsilon = (1.0 - alpha) / 2.0
+    pair = (gen[:, 0] - gen[:, 1]).abs()
+    old = (gen - target).abs().mean(dim=1) - (1.0 - old_epsilon) * 0.5 * pair
+    torch.testing.assert_close(get_crps(gen, target, alpha=alpha), old)
+
+
+def test_energy_score_is_bit_identical_at_two_members():
+    """B2 generalised get_energy_score past two members. Every arm that uses it
+    runs at M2, where the generalisation must reproduce the old expression."""
+    torch.manual_seed(0)
+    shape = (8, 2, 3, 5)
+    gen = torch.randn(*shape) + 1j * torch.randn(*shape)
+    target = torch.randn(8, 1, 3, 5) + 1j * torch.randn(8, 1, 3, 5)
+    old = (gen - target).abs().mean(dim=1) - 0.5 * (gen[:, 0] - gen[:, 1]).abs()
+    torch.testing.assert_close(get_energy_score(gen, target), old, rtol=0, atol=0)
+
+
+def test_energy_component_is_per_channel_not_constant():
+    """B1 repaired the energy component's shape. The bug made its per-channel
+    contribution a constant; RF01's scalar total was a mean over that constant
+    and so did not move, but the breakdown was meaningless."""
+    gen, target = _rf01_loss_inputs()
+    sht = LatLonOperations(torch.ones((8, 16))).get_real_sht()
+    loss = EnsembleLoss(crps_weight=0.9, energy_score_weight=0.1, sht=sht)
+    components = loss(gen, target)
+    total = LossOutput(components, ["a", "b", "c"]).total()
+    assert torch.isfinite(total)
+    # The bug made the energy term constant across channels; it must now vary.
+    energy = [c for c in components if c.loss.shape[-1] != gen.shape[-1]]
+    assert energy, "expected a spectral energy component"
+    per_channel = energy[0].reduce_to_channel()
+    assert per_channel.shape == (4, 3), per_channel.shape
+    assert (
+        len(set(per_channel[0].tolist())) > 1
+    ), "energy term is constant across channels"
