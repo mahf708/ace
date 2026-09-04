@@ -15,7 +15,7 @@ from fme.core.models.conditional_sfno.sfnonet import (
     SFNONetConfig,
     get_lat_lon_sfnonet,
 )
-from fme.core.rand import randn
+from fme.core.rand import randn, spatial_randn
 
 
 def isotropic_noise(
@@ -138,8 +138,13 @@ class NoiseConditionedModel(torch.nn.Module):
                 device=x.device,
             )
         else:
-            noise = randn(
-                torch.Size([x.shape[0], self.embed_dim, *x.shape[-2:]]),
+            # Drawn over the global grid and sliced, not at `x.shape[-2:]`:
+            # spatial co-ranks share an RNG history, so a local-shape draw
+            # gives every tile of a sample the same numbers and tiles the
+            # assembled field. See `spatial_randn`.
+            noise = spatial_randn(
+                (x.shape[0], self.embed_dim),
+                self.img_shape,
                 device=x.device,
                 dtype=x.dtype,
             )

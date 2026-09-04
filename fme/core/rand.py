@@ -64,6 +64,56 @@ def randn(shape: torch.Size, **kwargs) -> torch.Tensor:
         return torch.randn(shape, **kwargs)
 
 
+def spatial_randn(
+    leading_shape: tuple[int, ...],
+    img_shape: tuple[int, int],
+    device: torch.device | str | None = None,
+    dtype: torch.dtype | None = None,
+) -> torch.Tensor:
+    """Draw a normal field over the *global* grid and return this rank's tile.
+
+    A field drawn at the local tile shape is wrong under spatial parallelism:
+    spatial co-ranks share a seed and an RNG history, so every tile of a sample
+    receives the same numbers and the assembled global field repeats one
+    pattern ``h * w`` times -- artificial long-range covariance at exactly the
+    decomposition scale. Drawing globally and slicing makes the realization a
+    function of the seed alone, so a run is reproducible across, and comparable
+    between, decompositions.
+
+    Every rank materializes the whole field, so peak memory does not fall with
+    the decomposition; this matches what ``isotropic_noise`` already does for
+    its spectral coefficients. Chunking the draw cannot fix that without
+    changing the numbers -- torch's normal fill is not sequentially composable,
+    so a chunked draw differs from a whole one and would break parity with a
+    single-rank run. Getting both needs a counter-based generator keyed by
+    global position rather than a sequential one.
+
+    With no spatial parallelism this is exactly ``randn(...)``, including its
+    consumption of the active generator, so seeded single-rank results are
+    unchanged.
+
+    Args:
+        leading_shape: Dimensions preceding the spatial ones, e.g.
+            ``(batch, channels)``.
+        img_shape: Global ``(H, W)`` of the grid being drawn over.
+        device: Device for the returned tile.
+        dtype: Dtype of the draw.
+
+    Returns:
+        This rank's spatial tile of the global field.
+    """
+    dist = Distributed.get_instance()
+    dist.require_even_spatial_split(img_shape)
+    kwargs = {}
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    field = randn(torch.Size((*leading_shape, *img_shape)), device=device, **kwargs)
+    if dist.spatial_shape == (1, 1):
+        return field
+    slices = dist.get_local_slices(img_shape)
+    return field[(..., *slices)].contiguous()
+
+
 def log_normal_sample(
     p_mean: float, p_std: float, shape: torch.Size, dtype: torch.dtype
 ) -> torch.Tensor:
