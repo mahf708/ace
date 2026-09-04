@@ -173,6 +173,31 @@ def test_gather_irregular_matching_shapes():
 
 
 @pytest.mark.parallel
+def test_gather_irregular_differing_shapes():
+    """Ranks holding differently-shaped tensors must still gather.
+
+    `gather_irregular` pads every tensor up to a max shape so one collective
+    can carry them. That max has to span the same ranks the gather does -- the
+    whole world -- not just the data-parallel group. Scoping it to the data
+    group leaves spatial co-ranks padding to different shapes and handing
+    mismatched buffers to one collective, which hangs rather than erroring.
+    """
+    dist = Distributed.get_instance()
+    t = torch.full((dist.rank + 1, 3), float(dist.rank), device=get_device())
+    gathered = dist.gather_irregular(t)
+    if dist.is_root():
+        assert gathered is not None
+        assert len(gathered) == dist.world_size
+        for i, g in enumerate(gathered):
+            torch.testing.assert_close(
+                g.to(get_device()),
+                torch.full((i + 1, 3), float(i), device=get_device()),
+            )
+    else:
+        assert gathered is None
+
+
+@pytest.mark.parallel
 def test_gather_global_reconstructs_arange():
     """
     Split an arange tensor across dp-ranks and verify that
