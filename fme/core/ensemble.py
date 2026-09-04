@@ -81,15 +81,22 @@ def get_energy_score(
     Returns:
         The energy score.
     """
-    if gen.shape[1] != 2:
-        raise NotImplementedError(
-            "Energy score is written here specifically for 2 ensemble members, "
-            f"got {gen.shape[1]} ensemble members. "
-            "Update this function (and its tests) to support more."
-        )
-    # CRPS is `E[|X - y|] - 1/2 E[|X - X'|]`
-    # below we compute the first term as the average of two ensemble members
-    # meaning the 0.5 factor can be pulled out
-    target_term = torch.abs(gen - target).mean(axis=1)
-    internal_term = -0.5 * torch.abs(gen[:, 0, ...] - gen[:, 1, ...])
+    n_ens = gen.shape[1]
+
+    # Term 1: E||X - y||
+    target_term = torch.abs(gen - target).mean(dim=1)
+
+    if n_ens == 1:
+        internal_term = torch.zeros_like(target_term)
+    else:
+        # Term 2: 1/2 E||X - X'||, using the unbiased estimator that averages
+        # over unique pairs i < j. The previous two-member special case wrote
+        # this as -0.5 * |x_0 - x_1| by pulling the 0.5 out of a mean over the
+        # single pair; averaging over pairs recovers exactly that at M = 2 and
+        # generalises to any size.
+        idx = torch.triu_indices(n_ens, n_ens, offset=1, device=gen.device)
+        i, j = idx[0], idx[1]
+        pairwise = (gen[:, i, ...] - gen[:, j, ...]).abs()
+        internal_term = -0.5 * pairwise.mean(dim=1)
+
     return target_term + internal_term
