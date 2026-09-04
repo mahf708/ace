@@ -1400,6 +1400,48 @@ def test_inference_gridded_data_dataset_info_not_localized(_global_properties):
         assert inference.dataset_info.img_shape == (N_LAT, N_LON)
 
 
+@pytest.mark.parallel
+def test_inference_initial_condition_is_scattered(_global_properties):
+    """An externally supplied initial condition must be sliced to this rank.
+
+    Standalone inference loads the initial condition from its own dataset and
+    hands it in whole. The loader-derived branch is scattered because the
+    loader scatters; without a scatter here too the rollout would start from a
+    global state while its forcing and the model's activations are local
+    tiles.
+    """
+    from unittest.mock import MagicMock
+
+    from fme.ace.data_loading.gridded_data import InferenceGriddedData
+
+    global_data = torch.arange(float(N_LAT * N_LON), device=fme.get_device()).reshape(
+        1, 1, N_LAT, N_LON
+    )
+    time = xr.DataArray(
+        [[np.datetime64("2000-01-01")]],
+        dims=["sample", "time"],
+    )
+    initial_condition = PrognosticState(
+        BatchData(data={"temp": global_data}, time=time)
+    )
+
+    mock_loader = MagicMock()
+    mock_loader.__len__ = MagicMock(return_value=1)
+    mock_loader.__iter__ = MagicMock(return_value=iter([]))
+
+    inference = InferenceGriddedData(
+        loader=mock_loader,
+        initial_condition=initial_condition,
+        properties=_global_properties,
+    )
+
+    dist = Distributed.get_instance()
+    local = inference.initial_condition.as_batch_data().data["temp"]
+    slices = dist.get_local_slices((N_LAT, N_LON))
+    torch.testing.assert_close(local, global_data[(..., *slices)])
+    assert local.shape[-2:] == inference.horizontal_coordinates.shape[-2:]
+
+
 def test_gridded_data_with_variable_masking_concat(tmp_path):
     dir_a = tmp_path / "a"
     dir_a.mkdir()

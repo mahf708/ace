@@ -140,6 +140,10 @@ class PrognosticState:
     def to_device(self) -> "PrognosticState":
         return PrognosticState(self._data.to_device())
 
+    def scatter_spatial(self, global_img_shape: tuple[int, int]) -> "PrognosticState":
+        """Slice the state to this rank's spatial chunk."""
+        return PrognosticState(self._data.scatter_spatial(global_img_shape))
+
     def with_random_state(self, random_state: RandomState) -> "PrognosticState":
         """Return a copy with a seeded RandomState attached to its stepper_state.
 

@@ -80,7 +80,14 @@ class GriddedData(GriddedDataABC[BatchData]):
     ) -> DataLoader[BatchData]:
         def modify_and_on_device(batch: BatchData) -> BatchData:
             batch = self._modifier(batch)
-            return batch.to_device().scatter_spatial(self._global_img_shape)
+            # Slice before the device copy, not after: a rank only ever uses
+            # its own tile, so copying the whole global batch across the bus
+            # and then discarding (h*w - 1)/(h*w) of it costs both bandwidth
+            # and transient device memory. The modifier still runs on the
+            # global field, where spatial augmentations need it. With no
+            # spatial parallelism the slice is a view of the same (pinned)
+            # storage, so the transfer is unchanged.
+            return batch.scatter_spatial(self._global_img_shape).to_device()
 
         return SizedMap(modify_and_on_device, base_loader)
 
@@ -196,12 +203,21 @@ class InferenceGriddedData(InferenceDataABC[PrognosticState, BatchData]):
                 self.loader, initial_condition
             )
         else:
-            self._initial_condition = initial_condition.to_device()
+            # An externally supplied initial condition -- the standalone
+            # inference path, which loads it from its own dataset -- arrives
+            # global. The loader-derived branch above is already scattered
+            # because `self.loader` scatters; this one has to be scattered
+            # here, or the rollout starts from a global state while its
+            # forcing and the model's activations are local tiles.
+            self._initial_condition = initial_condition.to_device().scatter_spatial(
+                self._global_img_shape
+            )
 
     @property
     def loader(self) -> DataLoader[BatchData]:
         def scatter_and_on_device(batch: BatchData) -> BatchData:
-            return batch.to_device().scatter_spatial(self._global_img_shape)
+            # slice before the device copy; see GriddedData._get_gpu_loader
+            return batch.scatter_spatial(self._global_img_shape).to_device()
 
         return SizedMap(scatter_and_on_device, self._loader)
 
