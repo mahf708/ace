@@ -6,6 +6,15 @@ https://github.com/NVIDIA/physicsnemo/blob/62adbe43da94615b3843dbee866bd7af8939b
 We make some edits (formatting, removal of version checks and decorators,
 and removal of unused functions) to fit the current needs of FME.
 We also require a minimum of torch 2.4.0 for FME as a result.
+
+Behavioural changes from upstream are marked ``ace DIVERGENCE`` inline, so a
+future re-vendor can see what must not be reverted. Currently:
+
+- the launcher fallback catches ``KeyError`` as well as ``TypeError``, without
+  which the SLURM and OpenMPI paths were unreachable;
+- the NCCL watchdog is left at its default rather than disabled, because ace's
+  shutdown path depends on the collective timeout;
+- numpy is not seeded per rank, because ace does its own seeding.
 """
 
 # SPDX-FileCopyrightText: Copyright (c) 2023 - 2025 NVIDIA CORPORATION & AFFILIATES.
@@ -263,19 +272,27 @@ class DistributedManager:
 
         addr = os.getenv("MASTER_ADDR", "localhost")
         port = os.getenv("MASTER_PORT", "12355")
-        # https://pytorch.org/docs/master/notes/cuda.html#id5
-        # was changed in version 2.2
-        if torch.__version__ < (2, 2):
-            os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "0"
-        else:
-            os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "0"
+        # ace DIVERGENCE from upstream: upstream disables the NCCL watchdog
+        # here. ace relies on it -- its 30-minute collective timeout is what
+        # turns a lost peer into a failed rank rather than a job that hangs
+        # until its wall clock runs out, and the shutdown path is built around
+        # that (see `fme.core.distributed.shutdown` and the
+        # TORCH_NCCL_RETHROW_CUDA_ERRORS note in TorchDistributed.__init__).
+        # Leaving the setting alone keeps both backends behaving the same way
+        # under a fabric fault.
         initialization_method = os.getenv(
             "PHYSICSNEMO_DISTRIBUTED_INITIALIZATION_METHOD"
         )
         if initialization_method is None:
             try:
                 DistributedManager.initialize_env()
-            except TypeError:
+            # ace DIVERGENCE from upstream: upstream catches only TypeError,
+            # but `initialize_env` reads os.environ["RANK"] and so raises
+            # KeyError when the launcher is not torchrun. The SLURM and
+            # OpenMPI fallbacks below were therefore unreachable, and a plain
+            # `srun` job -- which this backend advertises support for -- died
+            # on the KeyError instead of falling through to them.
+            except (TypeError, KeyError):
                 if "SLURM_PROCID" in os.environ:
                     DistributedManager.initialize_slurm(port)
                 elif "OMPI_COMM_WORLD_RANK" in os.environ:
@@ -301,8 +318,12 @@ class DistributedManager:
                 "ENV, SLURM and OPENMPI"
             )
 
-        # Set per rank numpy random seed for data sampling
-        np.random.seed(seed=DistributedManager().rank)
+        # ace DIVERGENCE from upstream: upstream seeds numpy per rank here.
+        # ace owns its own seeding (`fme.core.rand.set_seed`, which seeds every
+        # rank identically), and doing it here would leave the numpy RNG
+        # rank-dependent on any path that does not call set_seed -- inference,
+        # for one -- making the model backend behave differently from the torch
+        # backend for no reason ace asked for.
 
     def initialize_mesh(
         self, mesh_shape: tuple[int, ...], mesh_dim_names: tuple[str, ...]
