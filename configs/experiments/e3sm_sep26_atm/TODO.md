@@ -8,15 +8,11 @@ results are in `PLAN.md` §11 and the scripts in `analysis/`.
 
 ## A. Blocking
 
-### A0. LG04 is config-validated but NOT smoke-verified
-`runs/LG04...yaml` passes `fme.ace.validate_config`, the checker and the tests,
-but no forward+backward pass has run on `D0` + `G0` + `M2` + `Z0` — an
-objective whose energy-score dispersion term is identically zero. Every other
-new axis this campaign added was smoke-tested before it was trusted, and the
-two upstream blockers were both found that way, not by validating. **Smoke it
-before P2 drains.** (A hand-built smoke config failed to parse on 2026-09-03;
-that was the harness, not the arm. Build the next one by overriding the
-generated yaml, not by editing a neighbouring smoke config.)
+### A0. LG04 smoke test — DONE
+`D0` + `G0` + `M2` + `Z0` had never run: an EnsembleLoss whose energy-score
+dispersion term is identically zero. It trains. On 3 years of data, batch 4,
+one node: 34 logged steps, `batch_loss` descending 0.9056 -> 0.8313, no NaN and
+no traceback. Reproduce with `analysis/make_smoke_config.py LG04`.
 
 ### A1. RF02 has to run before anything can be read
 Five arms difference against the deterministic pole. It is P1 and it is 567

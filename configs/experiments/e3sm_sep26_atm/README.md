@@ -70,7 +70,7 @@ So "every `M1` run" is a tag filter, not a regex.
 | LG01 ×3 | `D0_G1_…M1…Z0` | 0.48 | 567 | 2 | MAE vs MSE, no noise either side. **Paired** with RF02 |
 | LG02 ×3 | `D0_G1_…M1…Z1` | 0.48 | 567 | 2 | noise under MAE; M1 of the member sweep |
 | LG03 ×3 | `D1_…M1…Z1` | 0.48 | 567 | 2 | noise under MSE |
-| LG04 | `…M2…Z0` | 1.00 | 322 | 2 | RF01's objective, noise pathway removed — **not yet smoke-tested** |
+| LG04 | `…M2…Z0` | 1.00 | 322 | 2 | RF01's objective, noise pathway removed |
 | EN01 | `D0_G1_…M2…` | 1.00 | 322 | 2 | pure CRPS at 2 members; what the 0.1 spectral term buys |
 | NC01 | `…N1…` | 1.00 | 322 | 3 | gaussian vs isotropic noise |
 | OI02 | `…Q1…` | 1.00 | 322 | 3 | multiscale increment CRPS |
