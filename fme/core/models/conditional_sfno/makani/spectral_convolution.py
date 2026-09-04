@@ -20,6 +20,7 @@ import torch.nn as nn
 from torch import amp
 
 from fme.core.benchmark.timer import NullTimer, Timer
+from fme.core.distributed.distributed import Distributed
 
 # import convenience functions for factorized tensors
 from .factorizations import get_contract_fun
@@ -50,6 +51,18 @@ class SpectralConv(nn.Module):
 
         assert in_channels % num_groups == 0
         assert out_channels % num_groups == 0
+
+        # `modes_lat_local` below is set to the global `lmax`, so the weight
+        # spans every spectral mode while the input holds only this rank's.
+        # Unlike SpectralConvS2 there is no local slicing in the forward pass,
+        # so this is a shape error under h > 1 and, for a genuinely sharded
+        # weight, would need placement-aware gradients even if it were not.
+        # Reached from `filter_type="makani-linear"`.
+        Distributed.get_instance().require_no_spatial_parallelism(
+            "filter_type='makani-linear' does not support spatial parallelism: "
+            "its spectral weight is allocated at the global mode extent. Use "
+            "filter_type='linear' instead."
+        )
 
         self.forward_transform = forward_transform
         self.inverse_transform = inverse_transform

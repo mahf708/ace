@@ -40,6 +40,18 @@ class DistributedBackend(ABC):
         only 4 ranks of data paralellism.
         """
 
+    @property
+    @abstractmethod
+    def spatial_shape(self) -> tuple[int, int]:
+        """
+        Number of ranks along each spatial (h, w) model-parallel dimension.
+
+        ``(1, 1)`` for backends without spatial model parallelism. Code that
+        needs to know *which* spatial axis is decomposed -- for example a
+        spectral weight that is only partitioned along latitude -- should use
+        this rather than inferring it from ``total_ranks``.
+        """
+
     @abstractmethod
     def local_batch_size(self, batch_size: int) -> int: ...
 

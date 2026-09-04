@@ -17,6 +17,7 @@ from fme.ace.data_loading.batch_data import (
 )
 from fme.core.cloud import to_netcdf_via_inter_filesystem_copy
 from fme.core.dataset.data_typing import VariableMetadata
+from fme.core.distributed import Distributed
 from fme.core.generics.writer import WriterABC
 
 from .dataset_metadata import DatasetMetadata
@@ -86,6 +87,44 @@ class DataWriterConfig:
                 f"Filenames: {all_filenames}"
             )
 
+    @staticmethod
+    def _check_writers_are_safe(writers: Sequence[object]) -> None:
+        """Refuse to build real output writers under spatial parallelism.
+
+        Every rank runs this code and every writer opens its file by an
+        absolute path, sizes its dimensions from the tensor it is handed, and
+        serializes that tensor as-is. Under spatial parallelism the tensor is a
+        local tile, so the ranks would race to truncate one file and whichever
+        wrote last would leave a file whose dimensions claim to be global but
+        whose data is one tile. Writing correctly needs a designated writer
+        rank and a gather (netCDF) or disjoint region writes (zarr); until
+        that exists, fail rather than emit a plausible-looking wrong file.
+
+        Multi-rank runs *without* spatial parallelism hit the same race on the
+        shared path -- that is a pre-existing problem in the data writers, not
+        one spatial parallelism introduced, so it is warned about rather than
+        made a hard error here.
+        """
+        if not writers:
+            # An aggregator-only run writes nothing and is safe at any layout.
+            return
+        dist = Distributed.get_instance()
+        dist.require_no_spatial_parallelism(
+            "inference data writers do not support spatial parallelism: each "
+            "rank would write its own spatial tile to the same file. Disable "
+            "the file writers (save_prediction_files, save_monthly_files, "
+            "save_step_diagnostics, files) and use the aggregator output, or "
+            "run inference without spatial parallelism."
+        )
+        if dist.world_size > 1:
+            warnings.warn(
+                "Running inference on more than one rank with file writers "
+                "enabled: every rank writes the same output paths, so the "
+                "resulting files will be raced over and contain only one "
+                "rank's samples. Run inference on a single rank, or disable "
+                "the file writers."
+            )
+
     def _get_all_filenames(self) -> list[str]:
         filenames = []
         for file in self.files or []:
@@ -147,6 +186,7 @@ class DataWriterConfig:
                     dataset_metadata=dataset_metadata,
                 )
             )
+        self._check_writers_are_safe(writers)
         return PairedDataWriter(
             writers=writers,
             path=experiment_dir,
@@ -242,6 +282,7 @@ class DataWriterConfig:
                         dataset_metadata=dataset_metadata,
                     )
                 )
+        self._check_writers_are_safe(writers)
         return DataWriter(
             writers=writers,
             path=experiment_dir,

@@ -13,6 +13,7 @@ from fme.core.coordinates import HorizontalCoordinates, VerticalCoordinate
 from fme.core.dataset.data_typing import VariableMetadata
 from fme.core.dataset.properties import DatasetProperties
 from fme.core.dataset_info import DatasetInfo
+from fme.core.distributed import Distributed
 from fme.core.generics.data import (
     DataLoader,
     GriddedDataABC,
@@ -53,6 +54,10 @@ class GriddedData(GriddedDataABC[BatchData]):
         self._global_properties = properties.to_device()
         shape = self._global_properties.horizontal_coordinates.shape
         self._global_img_shape: tuple[int, int] = (shape[-2], shape[-1])
+        # Fail here rather than at the first scatter: this runs before the
+        # model is built and before any collective, so an unusable
+        # decomposition is reported as a config error instead of a hang.
+        Distributed.get_instance().require_even_spatial_split(self._global_img_shape)
         self._properties = self._global_properties.localize()
         self._timestep = self._properties.timestep
         self._vertical_coordinate = self._properties.vertical_coordinate
@@ -180,6 +185,10 @@ class InferenceGriddedData(InferenceDataABC[PrognosticState, BatchData]):
         self._global_properties = properties.to_device()
         shape = self._global_properties.horizontal_coordinates.shape
         self._global_img_shape: tuple[int, int] = (shape[-2], shape[-1])
+        # Fail here rather than at the first scatter: this runs before the
+        # model is built and before any collective, so an unusable
+        # decomposition is reported as a config error instead of a hang.
+        Distributed.get_instance().require_even_spatial_split(self._global_img_shape)
         self._properties = self._global_properties.localize()
         self._n_initial_conditions: int | None = None
         if isinstance(initial_condition, PrognosticStateDataRequirements):

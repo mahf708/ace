@@ -45,7 +45,10 @@ from fme.core.var_masking import (
     VariableMaskingConfig,
 )
 
-DEFAULT_IMG_SHAPE = (45, 90)
+# Divisible by every supported spatial decomposition: an uneven split of
+# the data grid is rejected, since ragged tiles cannot be carried by the
+# collectives that size their buffers from the local tile.
+DEFAULT_IMG_SHAPE = (16, 32)
 
 DATA_DIR = pathlib.Path(__file__).parent / "testdata"
 

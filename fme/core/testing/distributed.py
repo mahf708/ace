@@ -4,6 +4,7 @@ import torch
 
 from fme.core import metrics
 from fme.core.distributed import distributed
+from fme.core.distributed.non_distributed import NonDistributed
 
 
 class MockDistributed:
@@ -89,3 +90,51 @@ def mock_distributed(fill_value: float = 0.0, world_size: int = 1):
         yield distributed.singleton
     finally:
         distributed.singleton = original
+
+
+class FakeSpatialBackend(NonDistributed):
+    """A single-process backend that claims a spatial (h, w) decomposition.
+
+    Reports the rank layout of a spatially-parallel run while every collective
+    stays a local no-op, so single-process tests can exercise the capability
+    gates and the placement metadata that depend only on the *layout*. It is
+    not a simulation of spatial parallelism: anything whose correctness depends
+    on data actually being split across ranks belongs in `parallel_tests`.
+
+    ``get_local_slices`` does slice, so shapes match what a real rank of the
+    claimed decomposition would see.
+    """
+
+    def __init__(self, h_size: int = 1, w_size: int = 1):
+        self._h_size = h_size
+        self._w_size = w_size
+
+    @property
+    def total_ranks(self) -> int:
+        return self._h_size * self._w_size
+
+    @property
+    def total_data_parallel_ranks(self) -> int:
+        return 1
+
+    @property
+    def spatial_shape(self) -> tuple[int, int]:
+        return (self._h_size, self._w_size)
+
+    def get_local_slices(self, tensor_shape, data_parallel_dim=None):
+        from torch_harmonics.distributed import compute_split_shapes
+
+        slices = list(super().get_local_slices(tensor_shape, data_parallel_dim))
+        # rank 0 of each axis, so the local chunk is the leading block
+        slices[-2] = slice(0, compute_split_shapes(tensor_shape[-2], self._h_size)[0])
+        slices[-1] = slice(0, compute_split_shapes(tensor_shape[-1], self._w_size)[0])
+        return tuple(slices)
+
+
+@contextlib.contextmanager
+def fake_spatial_parallelism(h_size: int = 1, w_size: int = 1):
+    """Make the distributed singleton report an ``(h, w)`` spatial layout."""
+    with distributed.Distributed.replace_backend(
+        FakeSpatialBackend(h_size=h_size, w_size=w_size)
+    ) as instance:
+        yield instance

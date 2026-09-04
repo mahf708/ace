@@ -118,6 +118,10 @@ class TorchDistributed(DistributedBackend):
     def total_data_parallel_ranks(self) -> int:
         return self.total_ranks  # no model parallelism
 
+    @property
+    def spatial_shape(self) -> tuple[int, int]:
+        return (1, 1)  # no model parallelism
+
     def get_local_slices(self, tensor_shape, data_parallel_dim: int | None = None):
         return_list = [slice(None, None) for _ in tensor_shape]
         if data_parallel_dim is not None:

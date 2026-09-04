@@ -26,6 +26,18 @@ class SpatialParallelismNotImplemented(NotImplementedError):
     pass
 
 
+def _check_even_split(length: int, n_ranks: int, name: str) -> None:
+    if n_ranks > 1 and length % n_ranks != 0:
+        raise ValueError(
+            f"global spatial {name} {length} is not divisible by the {n_ranks} "
+            "ranks decomposing it. Uneven spatial splits of the data grid are "
+            "not supported: the resulting tiles have different shapes, which "
+            "`gather` and any collective sized from the local tile cannot "
+            "represent, so the failure surfaces as a hang rather than an "
+            "error. Choose a decomposition that divides the grid evenly."
+        )
+
+
 class Distributed:
     """
     A class to represent the distributed concerns for FME training.
@@ -224,6 +236,16 @@ class Distributed:
         """
         return self.world_size != self.total_data_parallel_ranks
 
+    @property
+    def spatial_shape(self) -> tuple[int, int]:
+        """Ranks along each spatial (h, w) model-parallel dimension.
+
+        ``(1, 1)`` when there is no spatial parallelism. Prefer this over
+        ``has_spatial_parallelism`` when only one of the two axes matters --
+        a latitude-partitioned spectral weight is unaffected by ``w``.
+        """
+        return self._distributed.spatial_shape
+
     def require_no_spatial_parallelism(self, msg: str) -> None:
         """Raise if spatial parallelism is active.
 
@@ -231,6 +253,27 @@ class Distributed:
         when spatial co-ranks exist.
         """
         if self.has_spatial_parallelism:
+            raise SpatialParallelismNotImplemented(msg)
+
+    def require_even_spatial_split(self, img_shape: tuple[int, int]) -> None:
+        """Raise unless the global grid divides evenly over the spatial mesh.
+
+        Applies to the *data grid* only. The spectral (l, m) axes are split by
+        ``torch_harmonics`` itself, which handles ragged extents through its
+        own variable-size collectives, and ``mmax = W // 2 + 1`` is usually odd
+        -- so those must not be held to this rule.
+        """
+        h_size, w_size = self.spatial_shape
+        _check_even_split(img_shape[-2], h_size, "height")
+        _check_even_split(img_shape[-1], w_size, "width")
+
+    def require_no_h_parallelism(self, msg: str) -> None:
+        """Raise if the latitude (h) axis is decomposed across ranks.
+
+        For code that is correct under longitude-only decomposition but not
+        under a partitioned latitude/spectral-mode axis.
+        """
+        if self.spatial_shape[0] > 1:
             raise SpatialParallelismNotImplemented(msg)
 
     def get_sampler(
@@ -504,6 +547,7 @@ class Distributed:
         self, data: dict[str, torch.Tensor], img_shape: tuple[int, int]
     ) -> dict[str, torch.Tensor]:
         """Slice global tensors to the local spatial chunk for this rank."""
+        self.require_even_spatial_split(img_shape)
         slices = self.get_local_slices(img_shape)
         return {k: v[(..., *slices)].contiguous() for k, v in data.items()}
 
@@ -524,6 +568,7 @@ class Distributed:
         """
         if img_shape == tensor.shape[-2:]:
             return tensor
+        self.require_even_spatial_split(img_shape)
         global_shape = (*tensor.shape[:-2], *img_shape)
         slices = self.get_local_slices(img_shape)
         buf = torch.zeros(global_shape, dtype=tensor.dtype, device=tensor.device)

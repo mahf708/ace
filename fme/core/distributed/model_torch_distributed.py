@@ -106,6 +106,16 @@ class ModelTorchDistributed(DistributedBackend):
             _check_world_size_divisible(self._world_size, spatial_size)
             self._data_size = self._world_size // spatial_size
             self._data_rank = self._rank // spatial_size
+            # A worker does not join the process group, so it cannot read its
+            # coordinates back off the mesh. Derive them from the global rank
+            # using the mesh's row-major (data, h, w) layout, so a worker can
+            # still answer `get_local_slices` and `spatial_shape` -- the
+            # sharding metadata is exactly what a worker needs and joining the
+            # group is what it must not do.
+            spatial_rank = self._rank % spatial_size
+            self._h_size, self._w_size = h_size, w_size
+            self._h_rank = spatial_rank // w_size
+            self._w_rank = spatial_rank % w_size
             return
 
         # Keep the NCCL watchdog from std::terminate-ing the rank on a CUDA
@@ -200,6 +210,11 @@ class ModelTorchDistributed(DistributedBackend):
     def total_data_parallel_ranks(self) -> int:
         """Number of data-parallel ranks."""
         return self._data_size
+
+    @property
+    def spatial_shape(self) -> tuple[int, int]:
+        """Ranks along each spatial (h, w) model-parallel dimension."""
+        return (self._h_size, self._w_size)
 
     def _get_local_spatial_shape(self, h: int, w: int):
         """Compute the local spatial slice for this rank.
@@ -330,11 +345,20 @@ class ModelTorchDistributed(DistributedBackend):
         )
         return output_list[0]  # type: ignore[return-value]
 
-    # For now, let's just borrow the same gather_irregular implementation
+    def _reduce_max_world(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Max-reduce over *every* rank, not just the data-parallel group."""
+        torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.MAX)
+        return tensor
+
     def gather_irregular(self, tensor: torch.Tensor) -> list[torch.Tensor] | None:
+        # `gather` is world-scoped here (unlike the reductions, which are
+        # data-scoped), so the padded shape every rank agrees on must also be a
+        # world-scoped max. Using the data-group max would have spatial
+        # co-ranks pad to different shapes and then hand mismatched buffers to
+        # a single collective -- a hang, not an error.
         return _gather_irregular(
             tensor,
-            self.reduce_max,
+            self._reduce_max_world,
             self.gather,
         )
 

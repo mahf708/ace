@@ -469,6 +469,17 @@ class HEALPixOperations(GriddedOperations):
             nside: The nside of the HEALPix grid. nside must be specified in order to
                 use the SHT. It is allowed to be None only for backwards compatibility.
         """
+        # Every reduction below is a plain local reduction over
+        # HORIZONTAL_DIMS. Under spatial parallelism those would silently
+        # report tile-local sums and means as global ones, so refuse. This
+        # duplicates HEALPixCoordinates.localize's guard on purpose: the
+        # operations are reachable from state that did not come through the
+        # coordinates, and a wrong conservation metric is not a loud failure.
+        Distributed.get_instance().require_no_spatial_parallelism(
+            "HEALPixOperations does not support spatial parallelism: its area "
+            "weighted reductions are local to each rank's tile and would be "
+            "reported as global quantities."
+        )
         self.nside = nside
 
     @property

@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 from fme.core.benchmark.timer import Timer, NullTimer
+from fme.core.distributed.distributed import Distributed
 from fme.core.models.conditional_sfno.lora import LoRAConv2d
 
 from .activations import ComplexReLU
@@ -203,6 +204,19 @@ class ConditionalLayerNorm(nn.Module):
             self.W_scale_pos = None
             self.W_bias_pos = None
         if global_layer_norm:
+            # nn.LayerNorm normalizes over an explicitly-shaped trailing block,
+            # so it needs the *global* (C, H, W) it is given here. Under spatial
+            # parallelism the input is a local tile of that shape, which is
+            # neither a shape nor a statistic this module can produce: a correct
+            # implementation needs local sums and sums-of-squares reduced over
+            # the spatial group, plus a placement for the affine parameters.
+            Distributed.get_instance().require_no_spatial_parallelism(
+                "global_layer_norm=True is not supported under spatial "
+                "parallelism: nn.LayerNorm would be built over the global "
+                f"(C, H, W)={(self.n_channels, img_shape[0], img_shape[1])} "
+                "while receiving only this rank's tile. Set "
+                "global_layer_norm=False, or run without spatial parallelism."
+            )
             self.norm = nn.LayerNorm(
                 (self.n_channels, img_shape[0], img_shape[1]),
                 eps=epsilon,

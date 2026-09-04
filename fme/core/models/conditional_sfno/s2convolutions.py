@@ -241,6 +241,18 @@ class SpectralConvS2(nn.Module):
 
         self.lora_rank = lora_rank
         if lora_rank > 0:
+            # lora_A/lora_B carry the *global* modes_lat, but the spectral
+            # input has already been partitioned along that axis, so the
+            # contraction below is a shape error under h > 1. Localizing them
+            # makes them genuinely sharded parameters, which the spatial
+            # gradient reduction and the root-only checkpoint do not yet
+            # represent -- so reject the combination rather than half-fix it.
+            dist.require_no_h_parallelism(
+                "spectral_lora_rank > 0 is not supported when the latitude "
+                "axis is decomposed (h > 1): the LoRA factors span the global "
+                "spectral modes while the input holds only this rank's modes. "
+                "Set spectral_lora_rank=0, or use a w-only decomposition."
+            )
             self.lora_A = nn.Parameter(
                 scale
                 * torch.randn(
