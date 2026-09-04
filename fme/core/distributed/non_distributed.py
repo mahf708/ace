@@ -53,6 +53,10 @@ class NonDistributed(DistributedBackend):
     def spatial_shape(self) -> tuple[int, int]:
         return (1, 1)  # no model parallelism
 
+    @property
+    def spatial_process_group(self) -> None:
+        return None  # no model parallelism
+
     def get_local_slices(self, tensor_shape, data_parallel_dim: int | None = None):
         return tuple(slice(None, None) for _ in tensor_shape)
 

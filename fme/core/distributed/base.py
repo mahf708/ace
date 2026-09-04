@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TypeVar
 
 import torch
+import torch.distributed
 import torch.nn as nn
 
 T = TypeVar("T")
@@ -51,6 +52,18 @@ class DistributedBackend(ABC):
         spectral weight that is only partitioned along latitude -- should use
         this rather than inferring it from ``total_ranks``.
         """
+
+    @property
+    @abstractmethod
+    def spatial_process_group(self) -> torch.distributed.ProcessGroup | None:
+        """The group of ranks holding tiles of the same sample.
+
+        ``None`` when there is no spatial decomposition to reduce over. Code
+        that owns a spatially-partitioned quantity needs the group itself, not
+        just its size -- reaching for the backend's private mesh subgroups is
+        how that requirement was met before it was part of the interface.
+        """
+        ...
 
     @abstractmethod
     def local_batch_size(self, batch_size: int) -> int: ...

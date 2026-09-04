@@ -22,7 +22,7 @@ from fme.core.distributed.parameter_placement import (
     SpatiallyShardedParameter,
     synchronize_replicated_parameters,
 )
-from fme.core.testing.regression import validate_tensor_dict
+from fme.core.testing.regression import NestedTensorDict, validate_tensor_dict
 
 IMG_SHAPE = (16, 32)
 N_SAMPLES = 2
@@ -93,7 +93,7 @@ def test_gradients_match_single_rank():
     dist = Distributed.get_instance()
     if dist.total_data_parallel_ranks > 1:
         pytest.skip("data-parallel ranks draw identical noise; see docstring")
-    grads = {k: v.cpu() for k, v in _backward(dist).items()}
+    grads: NestedTensorDict = {k: v.cpu() for k, v in _backward(dist).items()}
     validate_tensor_dict(grads, DATA_DIR / "sfno_gradients.pt", rtol=2e-4, atol=2e-6)
 
 
@@ -108,9 +108,9 @@ def test_gradients_agree_across_spatial_co_ranks():
     against a serial run.
     """
     dist = Distributed.get_instance()
-    if not dist.has_spatial_parallelism:
+    spatial_group = dist.spatial_process_group
+    if spatial_group is None:
         pytest.skip("no spatial co-ranks to compare against")
-    spatial_group = dist._distributed._spatial_group
 
     for name, grad in _backward(dist).items():
         lo, hi = grad.clone(), grad.clone()
@@ -128,13 +128,10 @@ def test_gradients_agree_across_spatial_co_ranks():
 @pytest.mark.parallel
 def test_identically_seeded_model_needs_no_correction():
     """An identically-seeded build already agrees, so nothing is overwritten."""
-    dist = Distributed.get_instance()
-    if not dist.has_spatial_parallelism:
+    spatial_group = Distributed.get_instance().spatial_process_group
+    if spatial_group is None:
         pytest.skip("no spatial group to compare across")
-    model = _build_model()
-    assert (
-        synchronize_replicated_parameters(model, dist._distributed._spatial_group) == []
-    )
+    assert synchronize_replicated_parameters(_build_model(), spatial_group) == []
 
 
 @pytest.mark.parallel
@@ -147,8 +144,9 @@ def test_sharded_parameter_is_rejected():
     spectral modes.
     """
     dist = Distributed.get_instance()
+    spatial_group = dist.spatial_process_group
     h_size, _ = dist.spatial_shape
-    if h_size == 1:
+    if spatial_group is None or h_size == 1:
         pytest.skip("needs an h decomposition to give ranks different sizes")
 
     module = torch.nn.Module()
@@ -156,7 +154,7 @@ def test_sharded_parameter_is_rejected():
         torch.zeros(8 // h_size + dist.rank % 2, device=fme.get_device())
     )
     with pytest.raises(SpatiallyShardedParameter, match="spatially sharded"):
-        synchronize_replicated_parameters(module, dist._distributed._spatial_group)
+        synchronize_replicated_parameters(module, spatial_group)
 
 
 @pytest.mark.parallel
@@ -170,9 +168,9 @@ def test_diverged_initialization_is_repaired():
     whoever remembered to seed it.
     """
     dist = Distributed.get_instance()
-    if not dist.has_spatial_parallelism:
+    spatial_group = dist.spatial_process_group
+    if spatial_group is None:
         pytest.skip("no spatial group to compare across")
-    spatial_group = dist._distributed._spatial_group
 
     module = torch.nn.Module()
     module.weight = torch.nn.Parameter(
@@ -180,10 +178,10 @@ def test_diverged_initialization_is_repaired():
     )
     corrected = synchronize_replicated_parameters(module, spatial_group)
 
+    # every rank now holds its spatial-group root's value
     spatial_root_value = float(dist.rank - torch.distributed.get_rank(spatial_group))
     torch.testing.assert_close(
         module.weight.detach(),
         torch.full((4,), spatial_root_value, device=fme.get_device()),
     )
-    if torch.distributed.get_world_size(spatial_group) > 1:
-        assert corrected == ["weight"]
+    assert corrected == ["weight"]

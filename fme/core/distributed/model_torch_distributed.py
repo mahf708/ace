@@ -218,6 +218,11 @@ class ModelTorchDistributed(DistributedBackend):
         """Ranks along each spatial (h, w) model-parallel dimension."""
         return (self._h_size, self._w_size)
 
+    @property
+    def spatial_process_group(self) -> torch.distributed.ProcessGroup | None:
+        """The (h, w) sub-mesh's group, or None when nothing is decomposed."""
+        return self._spatial_group if self._has_spatial_group() else None
+
     def _get_local_spatial_shape(self, h: int, w: int):
         """Compute the local spatial slice for this rank.
 
@@ -394,8 +399,9 @@ class ModelTorchDistributed(DistributedBackend):
                 output_device = [self._device_id]
             else:
                 output_device = None
-            if self._has_spatial_group():
-                synchronize_replicated_parameters(module, self._spatial_group)
+            spatial_group = self.spatial_process_group
+            if spatial_group is not None:
+                synchronize_replicated_parameters(module, spatial_group)
             wrapped = DistributedDataParallel(
                 SyncBatchNorm.convert_sync_batchnorm(module),
                 device_ids=self._device_ids,
@@ -403,9 +409,9 @@ class ModelTorchDistributed(DistributedBackend):
                 process_group=self._data_group,
                 broadcast_buffers=False,
             )
-            if self._has_spatial_group():
+            if spatial_group is not None:
                 wrapped.register_comm_hook(
-                    state=(self._spatial_group, self._data_group),
+                    state=(spatial_group, self._data_group),
                     hook=spatial_then_data_allreduce_hook,
                 )
             return wrapped

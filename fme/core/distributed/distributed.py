@@ -5,6 +5,7 @@ from collections.abc import Generator, Iterator
 from typing import TypeVar
 
 import torch
+import torch.distributed
 
 from fme.core import metrics
 from fme.core.device import using_gpu
@@ -254,6 +255,11 @@ class Distributed:
         """
         if self.has_spatial_parallelism:
             raise SpatialParallelismNotImplemented(msg)
+
+    @property
+    def spatial_process_group(self) -> "torch.distributed.ProcessGroup | None":
+        """The group of ranks holding tiles of the same sample, if any."""
+        return self._distributed.spatial_process_group
 
     def require_even_spatial_split(self, img_shape: tuple[int, int]) -> None:
         """Raise unless the global grid divides evenly over the spatial mesh.

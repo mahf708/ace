@@ -21,7 +21,7 @@ import fme
 from fme.core.distributed.distributed import Distributed
 from fme.core.models.conditional_sfno.layers import Context
 from fme.core.models.conditional_sfno.sfnonet import SFNONetConfig, get_lat_lon_sfnonet
-from fme.core.testing.regression import validate_tensor_dict
+from fme.core.testing.regression import NestedTensorDict, validate_tensor_dict
 
 IMG_SHAPE = (16, 32)
 DATA_DIR = pathlib.Path(__file__).parent / "testdata"
@@ -68,8 +68,12 @@ def test_latent_envelope_is_decomposition_invariant():
 
     # The envelope is a global quantity, so it is identical on every rank and
     # must equal what a single-rank run recorded.
+    envelope: NestedTensorDict = {
+        "gm_min": net._gm_min.cpu(),
+        "gm_max": net._gm_max.cpu(),
+    }
     validate_tensor_dict(
-        {"gm_min": net._gm_min.cpu(), "gm_max": net._gm_max.cpu()},
+        envelope,
         DATA_DIR / "latent_clip_envelope.pt",
         rtol=1e-5,
         atol=1e-6,
@@ -94,8 +98,9 @@ def test_latent_clip_eval_output_is_decomposition_invariant():
         output = net(shifted, _context())
 
     gathered = dist.gather_spatial_tensor(output, IMG_SHAPE)
+    result: NestedTensorDict = {"output": gathered.cpu()}
     validate_tensor_dict(
-        {"output": gathered.cpu()},
+        result,
         DATA_DIR / "latent_clip_eval_output.pt",
         rtol=1e-4,
         atol=1e-5,

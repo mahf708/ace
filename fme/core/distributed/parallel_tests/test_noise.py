@@ -20,7 +20,7 @@ import torch
 import fme
 from fme.core.distributed.distributed import Distributed
 from fme.core.rand import randn, spatial_randn
-from fme.core.testing.regression import validate_tensor_dict
+from fme.core.testing.regression import NestedTensorDict, validate_tensor_dict
 
 IMG_SHAPE = (16, 32)
 DATA_DIR = pathlib.Path(__file__).parent / "testdata"
@@ -139,8 +139,9 @@ def test_conditioning_noise_is_decomposition_invariant(noise_type):
 
     assert gathered.shape[-2:] == IMG_SHAPE
     _assert_tiles_differ(gathered)
+    result: NestedTensorDict = {"noise": gathered.cpu()}
     validate_tensor_dict(
-        {"noise": gathered.cpu()},
+        result,
         DATA_DIR / f"conditioning_noise_{noise_type}.pt",
         rtol=1e-5,
         atol=1e-6,

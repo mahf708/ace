@@ -145,7 +145,7 @@ def _build_writer(config, tmp_path):
         timestep=datetime.timedelta(hours=6),
         variable_metadata={},
         coords={"lat": np.arange(16.0), "lon": np.arange(32.0)},
-        dataset_metadata=DatasetMetadata(source="test"),
+        dataset_metadata=DatasetMetadata(),
     )
 
 
