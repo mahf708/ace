@@ -15,6 +15,31 @@ by one of these.
 | `noise_amplitude.py` | has aug26 E01 learned to use its noise? | **yes** — 0 → 5.0% 1σ scale modulation, saturating ~epoch 11 |
 | `loss_semantics.py` | what do the ensemble losses actually score? | energy score is per-coefficient marginal; almost-fair CRPS is exact only at `M2` |
 
+## Smoke-testing a new arm
+
+`make_smoke_config.py` turns a generated run config into a cheap one that
+still trains the same objective. Build DOWN from `runs/<runid>.yaml` -- never
+sideways from a neighbouring smoke config, which is how you end up
+smoke-testing something that is not the arm.
+
+```bash
+./analysis/make_smoke_config.py LG04 --years 3 --nodes 1
+srun -N1 -n1 --gpus-per-node=4 --overlap \
+  .venv/bin/torchrun --nproc-per-node 4 -m fme.ace.train \
+  $CAMPAIGN_SMOKE/lg04/config.yaml
+```
+
+Two traps, both paid for once already:
+
+* **Launch with `torchrun`, not bare `srun -n4`.** FME picks its device from
+  `LOCAL_RANK`, which plain srun does not set, so all four ranks land on
+  `cuda:0` and OOM. The OOM looks like the arm needing more memory; it is not.
+  The giveaway is several processes listed against device 0.
+* **Narrowing `subset` alone does not make it cheap.** The loader still opens
+  every file the pattern matches and subsets afterwards, so setup stays at its
+  full length. `make_smoke_config.py` narrows `file_pattern` to the same years
+  -- 120 files instead of ~1,200.
+
 ## Running them
 
 `rank_noise.py` and `rank_noise_fix.py` need ≥2 GPUs under `torchrun`:

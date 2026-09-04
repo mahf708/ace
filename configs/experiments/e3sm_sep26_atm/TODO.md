@@ -33,19 +33,45 @@ present those comparisons — this affects aug26, which is running now.
 
 ## B. Upstream `ai2cm/ace` PRs — each its own branch
 
-### B1. `EnergyScoreLoss` mode_weights shape — one line, verified
+**B1, B2 and B5 are written, tested and committed** on branches off `main` in
+a worktree at `$PSCRATCH/ace-fixes`. Each was red-then-green: the test fails on
+`main` and passes with the fix.
+
+| branch | item | tests |
+|---|---|---|
+| `fix/almost-fair-crps-epsilon` | B5 | red at M3/M5, green 7/7 |
+| `fix/energy-score-mode-weights-shape` | B1 | red 2, green 93/93 `test_loss.py` |
+| `feature/energy-score-any-ensemble-size` | B2 | red at M1/M3/M5, green 9/9 |
+
+**They do not unblock the campaign yet.** They sit on `main`; sep26 runs from
+`e3sm/exps/hist-v2026.8.0`. Portability was **tested, not assumed** -- each
+commit was cherry-picked onto the campaign base:
+
+* each one **alone: clean**, `loss.py`'s divergence notwithstanding;
+* **all three in sequence: B5 then B2 conflict in `fme/core/test_ensemble.py`**
+  and nowhere else, because both append their tests to the end of the same
+  file. Keep both blocks; the sources merge untouched.
+
+Until someone ports them, `validate()`'s blockers stay in force and `G2`,
+`M1`/`M3`-with-energy and `Y1`-away-from-`M2` remain refused. That is the
+correct state: the campaign must not depend on unmerged branches.
+
+### B1. `EnergyScoreLoss` mode_weights shape — DONE, on a branch
 ```
 (*([1] * (x_hat.ndim - 1)), n_l, n_m)  ->  (*([1] * (es.ndim - 2)), n_l, n_m)
 ```
 E01's total is **bit-identical** across it, so it cannot force a retrain.
 Evidence: `analysis/verify_mode_weights_fix.py`. Unblocks `G2`.
 
-### B2. Generalize `get_energy_score` past two members
-**Trap:** the current code pulls the 0.5 out of the pairwise term because a
-two-member mean over one pair makes it cancel. A naive fix changes the `M2`
-number and silently invalidates RF01. Pin `M2` with a regression test first.
-Payoff: the member sweep could anchor on RF01 directly (one factor) instead of
-on `G1` (two factors).
+### B2. Generalize `get_energy_score` past two members — DONE, on a branch
+The trap was real and is now guarded: the old code pulled the 0.5 out of the
+pairwise term because a mean over one pair leaves it alone, so a naive fix
+changes the `M2` value and silently reinterprets RF01.
+`test_energy_score_is_unchanged_at_two_members` pins the old expression at
+**zero tolerance**. Averaging over unique pairs -- the normalisation `get_crps`
+already used -- reproduces `M2` exactly and generalises.
+Payoff once ported: the member sweep could anchor on RF01 directly (one factor)
+instead of on `G1` (two factors).
 
 ### B3. PR the data-loader work to `main`
 `time_buffer` exists only on `e3sm/exps/hist-v2026.8.0`, and it is worth 3.4× on
@@ -62,7 +88,7 @@ rank — noise decorrelates, init stays identical across ranks.
 aug26 E01 trained under the current behaviour. Ship it behind a config flag,
 default off, so sep26 can run an arm on each side of it.
 
-### B5. `get_crps` epsilon is `(1-alpha)/2`, should be `(1-alpha)/n_ensemble`
+### B5. `get_crps` epsilon is `(1-alpha)/2` — DONE, on a branch
 Exact at `M2`, 0.89% out at `M3`, 1.16% at `M4` (MEASURED against the analytic
 AIFS definition). One line. `validate()` refuses `Y1` away from `M2` until it
 lands, so no run is currently wrong.
