@@ -14,6 +14,22 @@ dispersion term is identically zero. It trains. On 3 years of data, batch 4,
 one node: 34 logged steps, `batch_loss` descending 0.9056 -> 0.8313, no NaN and
 no traceback. Reproduce with `analysis/make_smoke_config.py LG04`.
 
+### A0b. CU01's warm start — VERIFIED
+CU01 loads a `Z0` checkpoint (no noise convs) into a `Z1` architecture that has
+32 tensors the checkpoint does not contain. It trains -- but so would a silent
+no-op, so the weights were compared directly
+(`analysis/compare_warm_start.py`):
+
+| | |
+|---|---|
+| shared tensors | 103 of the parent's 104 |
+| median relative difference | **1.1e-02** (loaded, then ~10 steps of training) |
+| an independent draw | **1.41e+00** |
+| tensors only in the child | **32** -- the noise pathway, keeping its own init |
+
+Two orders of magnitude between "loaded" and "not loaded", so this is not a
+judgement call. Every arm in the run list is now smoke-verified.
+
 ### A1. RF02 has to run before anything can be read
 Five arms difference against the deterministic pole. It is P1 and it is 567
 node-hours (3 seeds × 189). Nothing in LG or RO03 means anything until it
@@ -60,7 +76,17 @@ three applied.
 E01's total is **bit-identical** across it, so it cannot force a retrain.
 Evidence: `analysis/verify_mode_weights_fix.py`. Unblocks `G2`.
 
-### B2. Generalize `get_energy_score` past two members — DONE, on a branch
+### B2. Generalize `get_energy_score` past two members — DONE, ported, VERIFIED IN SITU
+`M3` with `energy_score_weight: 0.1` -- the exact call that used to raise
+`NotImplementedError` on the first training batch -- now trains: 7 logged steps,
+loss 4.0444 -> 1.8906, zero `NotImplementedError`. Unit tests pin the score
+against the unbiased estimator at M = 1, 2, 3 and 5.
+
+**Consequence for the run list, not yet taken.** EN02 is `D0_G1_M3` -- pure CRPS
+at three members -- and it was put on `G1` *only* because `G0` at `M3` was
+blocked. It could now be `G0` at `M3`, which differences against RF01 on one
+factor (member count) instead of against EN01 on two. Strictly cleaner, and it
+renames the run, so it is a design call.
 The trap was real and is now guarded: the old code pulled the 0.5 out of the
 pairwise term because a mean over one pair leaves it alone, so a naive fix
 changes the `M2` value and silently reinterprets RF01.
