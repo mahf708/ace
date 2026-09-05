@@ -60,7 +60,7 @@ from fme.core.ocean import Ocean, OceanConfig
 from fme.core.step.multi_call import MultiCallConfig, MultiCallStep, MultiCallStepConfig
 from fme.core.step.single_module import SingleModuleStep, SingleModuleStepConfig
 from fme.core.step.step import StepSelector
-from fme.core.testing import mock_wandb
+from fme.core.testing import mock_distributed, mock_wandb
 from fme.core.typing_ import EnsembleTensorDict, TensorDict, TensorMapping
 
 DIR = pathlib.Path(__file__).parent
@@ -1635,3 +1635,36 @@ def test_inference_with_validation(tmp_path: pathlib.Path, validation_config_kwa
         ), f"Inference metrics should still be present"
 
     assert os.path.isdir(tmp_path / "validation")
+
+
+def _evaluator_config_with_n_initial_conditions(n: int) -> InferenceEvaluatorConfig:
+    return InferenceEvaluatorConfig(
+        experiment_dir="out",
+        n_forward_steps=4,
+        forward_steps_in_memory=2,
+        checkpoint_path="ckpt.tar",
+        logging=LoggingConfig(log_to_screen=False, log_to_file=False),
+        loader=InferenceDataLoaderConfig(
+            dataset=XarrayDataConfig(data_path="data"),
+            start_indices=InferenceInitialConditionIndices(
+                n_initial_conditions=n, first=0, interval=1
+            ),
+        ),
+    )
+
+
+def test_evaluator_rejects_indivisible_initial_conditions():
+    """A mismatch must be caught when the config is built.
+
+    Otherwise it surfaces as a bare AssertionError inside
+    InferenceDataset.__getitem__, once the dataset is open and the first
+    window has been requested -- minutes into an allocation.
+    """
+    with mock_distributed(world_size=3):
+        with pytest.raises(ValueError, match="divisible"):
+            _evaluator_config_with_n_initial_conditions(8)
+
+
+def test_evaluator_accepts_divisible_initial_conditions():
+    with mock_distributed(world_size=4):
+        _evaluator_config_with_n_initial_conditions(8)

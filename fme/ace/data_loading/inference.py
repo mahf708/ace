@@ -152,6 +152,24 @@ class InferenceDataLoaderConfig:
     def n_initial_conditions(self) -> int:
         return self.start_indices.n_initial_conditions
 
+    def validate_initial_conditions_divisible(self) -> None:
+        """Raise if the initial conditions cannot be dealt out evenly.
+
+        ``InferenceDataset.__getitem__`` asserts that each rank received
+        ``n_initial_conditions // total_data_parallel_ranks`` samples. That
+        assert fires only once the dataset has been opened and the first
+        window requested, which on a large dataset is minutes into a job, and
+        it carries no message. Callers validate here instead.
+        """
+        dist = Distributed.get_instance()
+        n_ranks = dist.total_data_parallel_ranks
+        if self.n_initial_conditions % n_ranks != 0:
+            raise ValueError(
+                "Number of inference initial conditions must be divisible by "
+                f"the number of data-parallel ranks, got "
+                f"{self.n_initial_conditions} and {n_ranks}."
+            )
+
     @property
     def zarr_engine_used(self) -> bool:
         """

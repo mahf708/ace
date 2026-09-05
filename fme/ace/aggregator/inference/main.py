@@ -11,7 +11,11 @@ import xarray as xr
 from fme.ace.data_loading.batch_data import PairedData, PrognosticState
 from fme.core.coordinates import HorizontalCoordinates, LatLonCoordinates
 from fme.core.dataset_info import DatasetInfo
-from fme.core.diagnostics import get_reduced_diagnostics, write_reduced_diagnostics
+from fme.core.diagnostics import (
+    GetDataset,
+    get_reduced_diagnostics,
+    write_reduced_diagnostics,
+)
 from fme.core.fill import SmoothFloodFill
 from fme.core.generics.aggregator import (
     InferenceAggregatorABC,
@@ -713,9 +717,12 @@ class InferenceEvaluatorAggregator(
     @torch.no_grad()
     def flush_diagnostics(self, subdir: str | None = None):
         if self._save_diagnostics:
+            sub_aggregators: dict[str, GetDataset] = dict(self._aggregators)
+            if self.n_ensemble_per_ic > 1:
+                sub_aggregators.update(self._ensemble_aggregators)
             reduced_diagnostics = _with_step_diagnostics(
                 get_reduced_diagnostics(
-                    sub_aggregators=self._aggregators,
+                    sub_aggregators=sub_aggregators,
                     coords=self._coords,
                 ),
                 self._step_diagnostics_aggregator,

@@ -251,6 +251,7 @@ class InferenceEvaluatorConfig:
             self.forward_steps_in_memory,
             self.n_forward_steps,
         )
+        self.loader.validate_initial_conditions_divisible()
 
     def configure_logging(self, log_filename: str):
         config = dataclasses.asdict(self)

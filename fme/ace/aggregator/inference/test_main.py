@@ -169,3 +169,62 @@ def test_inference_evaluator_aggregator_ensemble():
                 summary_logs[f"ensemble_step_20/{metric}/{varname}"]
                 != summary_logs[f"ensemble_step_20_norm/{metric}/{varname}"]
             )
+
+
+def test_ensemble_metrics_are_written_to_diagnostics(tmp_path):
+    """Ensemble scores must reach disk, not only the WandB summary.
+
+    Offline scoring of an ensemble inference reads the diagnostics
+    directory; without this the CRPS/SSR/ensemble-mean RMSE of a run are
+    lost whenever WandB is disabled.
+    """
+    n_ic_steps = 1
+    n_forward_steps = 39
+    n_timesteps = n_ic_steps + n_forward_steps
+    nx, ny = 4, 4
+    n_ensemble = 2
+
+    ds_info = get_ds_info(nx, ny)
+    initial_time = xr.DataArray(np.zeros((1,)), dims=["sample"])
+
+    agg = build_inference_evaluator_aggregator(
+        metrics=[
+            TimeMeanMetricConfig(target="norm"),
+            EnsembleMetricConfig(step=20, target="denorm"),
+            EnsembleMetricConfig(step=20, target="norm"),
+        ],
+        dataset_info=ds_info,
+        n_ic_steps=n_ic_steps,
+        n_forward_steps=n_forward_steps,
+        initial_time=initial_time,
+        normalize=lambda x, apply_mean=True: {k: v * 0.5 for k, v in x.items()},
+        channel_mean_names=["a", "b"],
+        save_diagnostics=True,
+        output_dir=str(tmp_path),
+        n_ensemble_per_ic=n_ensemble,
+    )
+
+    target_data = BatchData.new_for_testing(
+        names=["a", "b"],
+        n_samples=1,
+        n_timesteps=n_timesteps,
+        img_shape=(nx, ny),
+    ).broadcast_ensemble(n_ensemble=n_ensemble)
+    gen_data = BatchData.new_for_testing(
+        names=["a", "b"],
+        n_samples=1,
+        n_timesteps=n_timesteps,
+        img_shape=(nx, ny),
+    ).broadcast_ensemble(n_ensemble=n_ensemble)
+
+    agg.record_batch(
+        PairedData.from_batch_data(prediction=gen_data, reference=target_data)
+    )
+    agg.flush_diagnostics()
+
+    written = tmp_path / "ensemble_step_20_diagnostics.nc"
+    assert written.exists(), sorted(p.name for p in tmp_path.iterdir())
+    ds = xr.open_dataset(written)
+    assert "crps-a" in ds
+    assert "ssr_bias-a" in ds
+    assert (tmp_path / "ensemble_step_20_norm_diagnostics.nc").exists()

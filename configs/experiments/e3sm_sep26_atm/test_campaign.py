@@ -536,3 +536,162 @@ def test_energy_component_is_per_channel_not_constant():
     assert (
         len(set(per_channel[0].tolist())) > 1
     ), "energy term is constant across channels"
+
+
+# ------------------------------------------------------ the eval generator --
+#
+# The offline evaluation is a launch gate rather than a nice-to-have: every
+# inline rollout block runs one member per initial condition, so nothing in
+# training measures calibration or spread.  These tests cover the three ways
+# an eval config can be wrong in a way that only shows up on a node.
+
+
+def _eval(
+    *,
+    which_pass: str = "scores",
+    noise: str = "keep",
+    word: mk.Word | None = None,
+    members: int = 4,
+    n_ics: int = 8,
+    nodes: int = 2,
+    years: int = 1,
+) -> dict:
+    import make_eval_config as ev
+
+    return ev.build(
+        runid="RF01.S01",
+        checkpoint="/nowhere",
+        word=word,
+        which_pass=which_pass,
+        noise=noise,
+        members=members,
+        n_ics=n_ics,
+        nodes=nodes,
+        years=years,
+        seed=1,
+        out_dir="/tmp/eval",
+    )
+
+
+def test_eval_refuses_initial_conditions_the_loader_cannot_split():
+    """8 ICs over 12 ranks asserts inside __getitem__, minutes into a job."""
+    import make_eval_config as ev
+
+    with pytest.raises(ev.EvalError, match="remainder"):
+        _eval(n_ics=8, nodes=3)
+
+
+def test_eval_names_the_node_counts_that_would_work():
+    import make_eval_config as ev
+
+    with pytest.raises(ev.EvalError, match=r"divide 8: \[1, 2\]"):
+        _eval(n_ics=8, nodes=3)
+
+
+def test_eval_refuses_a_noise_mode_on_a_deterministic_arm():
+    """Z0 has no noise pathway; the stepper raises, but only after loading."""
+    import make_eval_config as ev
+
+    with pytest.raises(ev.EvalError, match="no noise pathway"):
+        _eval(noise="off", word=mk.Word.of(D="1", M="1", Z="0"))
+
+
+def test_eval_takes_a_noise_mode_on_a_stochastic_arm():
+    config = _eval(noise="mean", word=mk.Word.of())
+    assert config["stepper_override"]["noise"]["mode"] == "mean"
+    assert config["stepper_override"]["noise"]["draws"] > 1
+
+
+def test_eval_keep_writes_no_stepper_override():
+    """`keep` must leave the checkpoint's own behaviour alone."""
+    assert "stepper_override" not in _eval(noise="keep")
+
+
+def test_scores_pass_scores_the_ensemble_and_writes_no_trajectories():
+    config = _eval(which_pass="scores", members=4)
+    assert config["n_ensemble_per_ic"] == 4
+    assert config["aggregator"]["ensembles"]
+    assert config["data_writer"]["save_prediction_files"] is False
+
+
+def test_trajectory_pass_writes_trajectories_and_scores_no_ensemble():
+    config = _eval(which_pass="traj", members=1)
+    assert config["n_ensemble_per_ic"] == 1
+    assert "ensembles" not in config["aggregator"]
+    assert config["data_writer"]["save_prediction_files"] is True
+
+
+def test_eval_reads_its_data_from_the_training_template():
+    """An eval config that names its own dataset can drift from the runs."""
+    import make_eval_config as ev
+
+    template = ev._template()
+    block = ev._test_block(template)
+    config = _eval(n_ics=8)
+    template_dataset = dict(block["loader"]["dataset"])
+    eval_dataset = dict(config["loader"]["dataset"])
+    # the file glob is deliberately narrowed to the reachable years; every
+    # other key -- paths, renames, unit conversions -- comes straight across
+    assert eval_dataset.pop("file_pattern") != template_dataset.pop("file_pattern")
+    assert eval_dataset == template_dataset
+    assert (
+        config["loader"]["start_indices"]["times"]
+        == block["loader"]["start_indices"]["times"][:8]
+    )
+
+
+def test_eval_refuses_more_initial_conditions_than_the_template_holds():
+    import make_eval_config as ev
+
+    with pytest.raises(ev.EvalError, match="fewer than"):
+        _eval(n_ics=32, nodes=8)
+
+
+def test_eval_ids_use_campaign_names_not_inherited_ones():
+    """RF01's weights are aug26's E01; every table calls it RF01."""
+    import make_eval_config as ev
+
+    assert ev.eval_id("RF01.S01", "scores", "keep") == "RF01.S01.eval-scores"
+    assert ev.eval_id("RF01.S01", "traj", "off") == "RF01.S01.eval-traj-off"
+
+
+def test_eval_narrows_the_file_glob_to_the_reachable_years():
+    """1,501 files open in 13+ minutes, and every eval job pays it."""
+    import make_eval_config as ev
+
+    pattern = "v3.LR.historical_0101.aigo.eam.h0.*.nc"
+    ics = ["2040-01-03T12:00:00", "2047-07-03T12:00:00"]
+    assert ev.narrow_file_pattern(pattern, ics, years=5) == (
+        "v3.LR.historical_0101.aigo.eam.h0.20[4-5]*.nc"
+    )
+
+
+def test_eval_glob_covers_the_end_of_the_rollout():
+    """A July 2047 start plus five years runs into 2052."""
+    import make_eval_config as ev
+
+    narrowed = ev.narrow_file_pattern("x.h0.*.nc", ["2047-07-03T12:00:00"], years=5)
+    assert narrowed == "x.h0.20[4-5]*.nc"
+    # one year from 2040 stays inside one decade
+    assert (
+        ev.narrow_file_pattern("x.h0.*.nc", ["2040-01-03T12:00:00"], 1)
+        == "x.h0.204*.nc"
+    )
+
+
+def test_eval_leaves_an_unexpected_pattern_alone():
+    """Better a slow open than a glob that silently drops the target years."""
+    import make_eval_config as ev
+
+    assert (
+        ev.narrow_file_pattern("something.zarr", ["2040-01-03"], 5) == "something.zarr"
+    )
+
+
+def test_eval_config_uses_the_narrowed_pattern():
+    """Five years from the 2047 start of the full block reaches 2053."""
+    both = _eval(n_ics=16, years=5)["loader"]["dataset"]["file_pattern"]
+    assert "20[4-5]" in both
+    # the first eight initial conditions stop in 2043, so one decade covers
+    # even a five-year rollout from them
+    assert "204*" in _eval(n_ics=8, years=5)["loader"]["dataset"]["file_pattern"]
