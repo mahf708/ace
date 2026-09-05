@@ -940,3 +940,35 @@ def test_get_batch_lead_time_microseconds_overflow(years_ahead, overflow):
     else:
         with pytest.raises(OverflowError):
             get_batch_lead_time_microseconds(init_times, batch_time)
+
+
+def test_raw_writer_writes_one_file_per_rank(tmp_path):
+    """Under distributed inference each rank holds its own initial conditions
+    and writes them itself, so the raw writer must not share one file between
+    ranks: the file name carries the rank when world_size > 1 and is unchanged
+    on a single process."""
+    from fme.ace.inference.data_writer.raw import RawDataWriter
+    from fme.core.testing.distributed import mock_distributed
+
+    initial_condition_times = get_initial_condition_times(
+        (2020, 1, 1, 0, 0, 0), "julian", 2
+    )
+    kwargs = dict(
+        save_names=None,
+        variable_metadata={},
+        coords={},
+        dataset_metadata=DatasetMetadata(source={"inference_version": "1.0"}),
+        initial_condition_times=initial_condition_times,
+    )
+    (tmp_path / "single").mkdir()
+    (tmp_path / "multi").mkdir()
+    RawDataWriter(
+        path=str(tmp_path / "single"), label="autoregressive_predictions", **kwargs
+    )
+    assert (tmp_path / "single" / "autoregressive_predictions.nc").exists()
+    with mock_distributed(world_size=2):
+        RawDataWriter(
+            path=str(tmp_path / "multi"), label="autoregressive_predictions", **kwargs
+        )
+    assert (tmp_path / "multi" / "autoregressive_predictions_rank000.nc").exists()
+    assert not (tmp_path / "multi" / "autoregressive_predictions.nc").exists()

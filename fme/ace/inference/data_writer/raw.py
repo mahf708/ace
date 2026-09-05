@@ -20,6 +20,7 @@ from fme.ace.inference.data_writer.utils import (
 )
 from fme.core.cloud import is_local
 from fme.core.dataset.data_typing import VariableMetadata
+from fme.core.distributed import Distributed
 from fme.core.writer import DATETIME_ENCODING_UNITS, TIMEDELTA_ENCODING_UNITS
 
 LEAD_TIME_DIM = "time"
@@ -126,6 +127,13 @@ class RawDataWriter:
                 "using the ZarrWriter instead, which supports writing to a "
                 "non-local filesystem."
             )
+        # Each data-parallel rank holds its own initial conditions and writes
+        # them itself. Sharing one file between ranks corrupts it (metadata
+        # checksum failures on read), so under distributed inference every
+        # rank writes its own file, suffixed by rank.
+        dist = Distributed.get_instance()
+        if dist.world_size > 1:
+            label = f"{label}_rank{dist.rank:03d}"
         filename = str(Path(path) / f"{label}.nc")
         calendar = infer_calendar(initial_condition_times)
         n_initial_conditions = len(initial_condition_times)

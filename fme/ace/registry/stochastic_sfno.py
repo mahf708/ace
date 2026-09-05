@@ -90,6 +90,21 @@ class NoiseConditionedModel(torch.nn.Module):
         self._inverse_sht = inverse_sht
         self._lmax = lmax
         self._mmax = mmax
+        # Inference-time controls on the conditioning noise. Both default to
+        # the training behaviour: a fresh unit-variance draw on every call.
+        # ``noise_scale`` multiplies the draw (0 silences the pathway, which
+        # evaluates the learned deterministic backbone g(x, 0)); ``noise_mode``
+        # "fixed" draws once and reuses that field on every subsequent call
+        # with the same batch shape, so a rollout carries one latent
+        # realisation through time instead of a temporally white sequence.
+        # Neither is part of the module's state_dict.
+        self.noise_scale: float = 1.0
+        self.noise_mode: Literal["fresh", "fixed", "mean"] = "fresh"
+        # "mean": average the network output over ``noise_draws`` fresh draws
+        # at every call, i.e. iterate the conditional-mean operator
+        # E_Z g(x, Z) rather than the backbone g(x, 0).
+        self.noise_draws: int = 1
+        self._fixed_noise: torch.Tensor | None = None
 
         if label_embed_dim > 0 and n_labels == 0:
             raise ValueError("label_embed_dim > 0 requires n_labels > 0")
@@ -125,24 +140,85 @@ class NoiseConditionedModel(torch.nn.Module):
         else:
             self.pos_embed = None
 
-    def forward(
-        self, x: torch.Tensor, labels: torch.Tensor | None = None
-    ) -> torch.Tensor:
-        x = x.reshape(-1, *x.shape[-3:])
+    def set_noise_override(
+        self,
+        scale: float,
+        mode: Literal["fresh", "fixed", "mean"] = "fresh",
+        draws: int = 1,
+    ) -> None:
+        """Set the inference-time noise controls.
+
+        Args:
+            scale: Multiplier applied to the unit-variance conditioning noise.
+                0 evaluates the deterministic backbone.
+            mode: "fresh" draws new noise on every call (training behaviour);
+                "fixed" draws once and reuses it for every later call with the
+                same batch shape; "mean" averages the output over ``draws``
+                fresh draws, evaluating the conditional-mean operator.
+            draws: Number of draws averaged in "mean" mode (ignored otherwise).
+        """
+        if scale < 0:
+            raise ValueError(f"noise scale must be non-negative, got {scale}")
+        if mode not in ("fresh", "fixed", "mean"):
+            raise ValueError(
+                f"noise mode must be 'fresh', 'fixed' or 'mean', got {mode!r}"
+            )
+        if mode == "mean" and draws < 1:
+            raise ValueError(f"noise draws must be positive, got {draws}")
+        self.noise_scale = float(scale)
+        self.noise_mode = mode
+        self.noise_draws = int(draws)
+        self._fixed_noise = None
+
+    def _draw_noise(self, x: torch.Tensor) -> torch.Tensor:
         if self._inverse_sht is not None:
-            noise = isotropic_noise(
+            return isotropic_noise(
                 (x.shape[0], self.embed_dim),
                 self._lmax,
                 self._mmax,
                 self._inverse_sht,
                 device=x.device,
             )
+        return randn(
+            torch.Size([x.shape[0], self.embed_dim, *x.shape[-2:]]),
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+    def _get_noise(self, x: torch.Tensor) -> torch.Tensor:
+        if self.noise_mode == "fixed":
+            expected_shape = (x.shape[0], self.embed_dim, *x.shape[-2:])
+            if (
+                self._fixed_noise is None
+                or tuple(self._fixed_noise.shape) != expected_shape
+                or self._fixed_noise.device != x.device
+            ):
+                self._fixed_noise = self._draw_noise(x).detach()
+            noise = self._fixed_noise
         else:
-            noise = randn(
-                torch.Size([x.shape[0], self.embed_dim, *x.shape[-2:]]),
-                device=x.device,
-                dtype=x.dtype,
-            )
+            noise = self._draw_noise(x)
+        if self.noise_scale != 1.0:
+            noise = noise * self.noise_scale
+        return noise
+
+    def forward(
+        self, x: torch.Tensor, labels: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        x = x.reshape(-1, *x.shape[-3:])
+        if self.noise_mode == "mean" and self.noise_draws > 1:
+            # Stack the draws along the batch so one call serves them all,
+            # then average the outputs per original sample.
+            n = self.noise_draws
+            x_rep = x.repeat_interleave(n, dim=0)
+            labels_rep = None if labels is None else labels.repeat_interleave(n, dim=0)
+            out = self._forward_single(x_rep, labels_rep)
+            return out.reshape(x.shape[0], n, *out.shape[1:]).mean(dim=1)
+        return self._forward_single(x, labels)
+
+    def _forward_single(
+        self, x: torch.Tensor, labels: torch.Tensor | None
+    ) -> torch.Tensor:
+        noise = self._get_noise(x)
 
         if labels is not None and self.label_embedding is not None:
             labels = self.label_embedding(labels)

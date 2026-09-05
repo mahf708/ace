@@ -9,8 +9,14 @@ from fme.core.distributed import distributed
 class MockDistributed:
     def __init__(self, fill_value: float, world_size: int):
         self.world_size = world_size
+        self.rank = 0
         self.fill_value = fill_value
         self.reduce_called = False
+
+    @property
+    def total_data_parallel_ranks(self) -> int:
+        # the mock has no spatial parallelism, so every rank is data-parallel
+        return self.world_size
 
     def local_batch_size(self, batch_size: int) -> int:
         return batch_size

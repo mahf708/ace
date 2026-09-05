@@ -800,6 +800,39 @@ class CheckpointStepperConfig:
         return load_stepper_config(self.checkpoint_path)
 
 
+@dataclasses.dataclass
+class NoiseOverrideConfig:
+    """
+    Inference-time control of the conditioning noise drawn by a stochastic
+    module (currently ``NoiseConditionedSFNO``). The trained weights are not
+    modified; only how the noise fed to them is generated.
+
+    Parameters:
+        scale: Multiplier on the unit-variance noise. ``0`` silences the noise
+            pathway and evaluates the deterministic backbone the stochastic
+            training produced; ``1`` reproduces training behaviour.
+        mode: ``"fresh"`` draws new noise at every step (training behaviour).
+            ``"fixed"`` draws one noise field per sample at the first step and
+            holds it for the rest of the rollout, so each trajectory carries a
+            single latent realisation rather than a temporally white sequence.
+            ``"mean"`` averages the network output over ``draws`` fresh draws
+            at every step, iterating the conditional-mean operator E_Z g(x, Z)
+            instead of the noise-off backbone g(x, 0); costs ``draws`` forward
+            passes per step.
+        draws: Number of draws averaged per step in ``"mean"`` mode.
+    """
+
+    scale: float = 1.0
+    mode: Literal["fresh", "fixed", "mean"] = "fresh"
+    draws: int = 1
+
+    def __post_init__(self):
+        if self.scale < 0:
+            raise ValueError(f"noise scale must be non-negative, got {self.scale}")
+        if self.mode == "mean" and self.draws < 1:
+            raise ValueError(f"noise draws must be positive, got {self.draws}")
+
+
 class Stepper:
     """
     Stepper class for selectable step configurations.
@@ -1029,6 +1062,38 @@ class Stepper:
     @property
     def n_ic_timesteps(self) -> int:
         return self._step_obj.n_ic_timesteps
+
+    def set_noise_override(self, noise: NoiseOverrideConfig) -> None:
+        """
+        Set inference-time controls on every noise-conditioned module.
+
+        Args:
+            noise: The scale and mode to apply.
+
+        Raises:
+            ValueError: if no module in the stepper draws conditioning noise,
+                since then the override would describe behaviour that does not
+                exist.
+        """
+        # Imported here: the registry builds modules from this package's
+        # configs, so a module-level import would be circular.
+        from fme.ace.registry.stochastic_sfno import NoiseConditionedModel
+
+        # A NoiseConditionedModel built with noise_embed_dim 0 wraps the
+        # network but draws no noise, so it does not count as stochastic.
+        targets = [
+            m
+            for top in self.modules
+            for m in top.modules()
+            if isinstance(m, NoiseConditionedModel) and m.embed_dim > 0
+        ]
+        if not targets:
+            raise ValueError(
+                "A noise override was requested but the stepper contains no "
+                "noise-conditioned module."
+            )
+        for m in targets:
+            m.set_noise_override(scale=noise.scale, mode=noise.mode, draws=noise.draws)
 
     @property
     def modules(self) -> nn.ModuleList:
@@ -1862,12 +1927,17 @@ class StepperOverrideConfig:
             producing a serialized stepper.
         prescribed_prognostic_names: List of prognostic variable names to overwrite
             from forcing at each step during inference.
+        noise: Inference-time control of the conditioning noise of a stochastic
+            module. Loading a checkpoint with no noise-conditioned module under
+            a non-"keep" value is an error, so a deterministic checkpoint cannot
+            silently be evaluated under a label that claims otherwise.
     """
 
     ocean: Literal["keep"] | OceanConfig | None = "keep"
     multi_call: Literal["keep"] | MultiCallConfig | None = "keep"
     derived_forcings: Literal["keep"] | DerivedForcingsConfig = "keep"
     prescribed_prognostic_names: Literal["keep"] | list[str] = "keep"
+    noise: Literal["keep"] | NoiseOverrideConfig = "keep"
 
 
 def load_stepper_config(
@@ -1960,6 +2030,13 @@ def apply_stepper_override(
         stepper.replace_prescribed_prognostic_names(
             override_config.prescribed_prognostic_names
         )
+    if override_config.noise != "keep":
+        logging.info(
+            "Overriding conditioning noise: scale=%s mode=%s.",
+            override_config.noise.scale,
+            override_config.noise.mode,
+        )
+        stepper.set_noise_override(override_config.noise)
 
 
 def apply_stepper_override_to_stepper_config(

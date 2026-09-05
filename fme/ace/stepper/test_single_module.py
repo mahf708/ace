@@ -33,6 +33,7 @@ from fme.ace.stepper.loss_schedule import EpochNotProvidedError
 from fme.ace.stepper.single_module import (
     AtmosphereCorrectorConfig,
     CheckpointStepperConfig,
+    NoiseOverrideConfig,
     SingleModuleStepperConfig,
     Stepper,
     StepperConfig,
@@ -3181,3 +3182,133 @@ def test_step_masks_corrector_diagnostics():
     assert torch.isnan(delta[..., 0, 0]).all()
     on_mask = delta[~torch.isnan(delta)]
     torch.testing.assert_close(on_mask, torch.full_like(on_mask, offset))
+
+
+def _save_noise_conditioned_stepper(path: pathlib.Path, noise_embed_dim: int):
+    """Save a checkpoint whose module is a tiny NoiseConditionedSFNO."""
+    in_names = ["a", "b"]
+    out_names = ["a", "b"]
+    config = StepperConfig(
+        step=StepSelector(
+            type="single_module",
+            config=dataclasses.asdict(
+                SingleModuleStepConfig(
+                    builder=ModuleSelector(
+                        type="NoiseConditionedSFNO",
+                        config={
+                            "embed_dim": 16,
+                            "noise_embed_dim": noise_embed_dim,
+                            "num_layers": 2,
+                            "noise_type": "gaussian",
+                            "pos_embed": False,
+                        },
+                    ),
+                    in_names=in_names,
+                    out_names=out_names,
+                    normalization=trivial_network_and_loss_normalization(
+                        set(in_names + out_names)
+                    ),
+                )
+            ),
+        ),
+    )
+    dataset_info = get_dataset_info()
+    stepper = config.get_stepper(dataset_info)
+    # The noise pathway starts at exactly zero; give it weight so the override
+    # has an observable effect on predictions.
+    with torch.no_grad():
+        for module in stepper.modules:
+            for name, param in module.named_parameters():
+                if "W_scale_2d" in name or "W_bias_2d" in name:
+                    param.normal_(std=0.5)
+    torch.save({"stepper": stepper.get_state()}, path)
+    return in_names, out_names
+
+
+def _predict_two_steps(stepper: Stepper, in_names: list[str]) -> torch.Tensor:
+    # Inputs come from a private generator so the global RNG, which the
+    # module's fresh noise draws from, is not reset between calls.
+    gen = torch.Generator().manual_seed(0)
+    n_samples = 2
+    n_steps = 2
+    index = xr.date_range("2000", freq="6h", periods=n_steps + 1, use_cftime=True)
+    forcing_time = xr.DataArray(np.stack(n_samples * [index]), dims=["sample", "time"])
+    shape = (n_samples, 1, *get_dataset_info().img_shape)
+    input_data = BatchData.new_on_device(
+        data={name: torch.rand(*shape, generator=gen).to(DEVICE) for name in in_names},
+        time=forcing_time.isel(time=[0]),
+        labels=None,
+    ).get_start(prognostic_names=in_names, n_ic_timesteps=1)
+    forcing = BatchData.new_on_device(
+        data={
+            name: torch.rand(n_samples, n_steps + 1, *shape[2:], generator=gen).to(
+                DEVICE
+            )
+            for name in in_names
+        },
+        time=forcing_time,
+        labels=None,
+    )
+    output, _ = stepper.predict(input_data, forcing, compute_derived_variables=False)
+    return torch.stack([output.data[name] for name in in_names], dim=-3)
+
+
+def test_load_stepper_with_noise_override(tmp_path: pathlib.Path):
+    """A noise override loads onto every noise-conditioned module: scale 0
+    makes the rollout reproducible, and 'fixed' holds one field per sample."""
+    from fme.ace.registry.stochastic_sfno import NoiseConditionedModel
+
+    stepper_path = tmp_path / "stepper"
+    in_names, _ = _save_noise_conditioned_stepper(stepper_path, noise_embed_dim=4)
+
+    # Default: fresh noise, so two rollouts from the same state differ.
+    stepper = load_stepper(stepper_path)
+    fresh_a = _predict_two_steps(stepper, in_names)
+    fresh_b = _predict_two_steps(stepper, in_names)
+    assert not torch.allclose(fresh_a, fresh_b)
+
+    # Noise off: reproducible, and not the same trajectory as with noise.
+    stepper = load_stepper(
+        stepper_path, StepperOverrideConfig(noise=NoiseOverrideConfig(scale=0.0))
+    )
+    targets = [
+        m
+        for top in stepper.modules
+        for m in top.modules()
+        if isinstance(m, NoiseConditionedModel)
+    ]
+    assert len(targets) == 1
+    assert targets[0].noise_scale == 0.0
+    off_a = _predict_two_steps(stepper, in_names)
+    off_b = _predict_two_steps(stepper, in_names)
+    torch.testing.assert_close(off_a, off_b)
+    assert not torch.allclose(off_a, fresh_a)
+
+    # Fixed: the module holds its field, so both steps of the rollout saw the
+    # same noise; consecutive rollouts of the same stepper also reuse it.
+    stepper = load_stepper(
+        stepper_path,
+        StepperOverrideConfig(noise=NoiseOverrideConfig(scale=1.0, mode="fixed")),
+    )
+    fixed_a = _predict_two_steps(stepper, in_names)
+    fixed_b = _predict_two_steps(stepper, in_names)
+    torch.testing.assert_close(fixed_a, fixed_b)
+    assert not torch.allclose(fixed_a, off_a)
+
+
+def test_noise_override_refuses_a_deterministic_checkpoint(tmp_path: pathlib.Path):
+    """A checkpoint with no noise pathway cannot be evaluated under a noise
+    label; the override must be loud rather than a silent no-op."""
+    stepper_path = tmp_path / "stepper"
+    _save_noise_conditioned_stepper(stepper_path, noise_embed_dim=0)
+    with pytest.raises(ValueError, match="no noise-conditioned module"):
+        load_stepper(
+            stepper_path, StepperOverrideConfig(noise=NoiseOverrideConfig(scale=0.0))
+        )
+    # "keep" still loads it.
+    load_stepper(stepper_path, StepperOverrideConfig())
+
+
+def test_noise_override_config_rejects_negative_scale():
+    with pytest.raises(ValueError):
+        NoiseOverrideConfig(scale=-0.5)
