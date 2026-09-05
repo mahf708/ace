@@ -135,6 +135,42 @@ Regenerating is a no-op against a committed `runs/`. Output lands in
 
 ---
 
+## Evaluating it
+
+Training's inline rollouts run **one member per initial condition**, so they
+score a single realisation and nothing else. Calibration, spread and every
+finite-ensemble score come from the offline passes.
+
+```bash
+./make_eval_config.py RF01.S01 --pass scores       # 4 members/IC, no files
+./make_eval_config.py RF01.S01 --pass traj         # 1 member, files written
+sbatch-scripts/submit-eval.sh --all --pass scores --dry-run
+sbatch-scripts/submit-eval.sh RF01.S01 --noise-ladder
+```
+
+| pass | shape | what it is for |
+|---|---|---|
+| `scores` | members per IC, no trajectory files | CRPS, spread–skill ratio, ensemble-mean RMSE at 6 h / 1 d / 5 d / 30 d / 90 d / 1 y |
+| `traj` | one member per IC, three fields written | per-trajectory variance, persistence, quantiles, wet-day frequency and intensity |
+
+The two passes are not interchangeable and the generator says so: asking for an
+ensemble on the trajectory pass is an error, because per-trajectory statistics
+must be computed **inside** a trajectory. Averaging four members first gives the
+lowest RMSE in the study and 8–41% too little variance.
+
+`--noise-ladder` adds four more inferences on the same weights — noise off, the
+iterated conditional mean, one held latent field, half amplitude. Each is one
+inference on a checkpoint that already exists and together they are the cheapest
+mechanism probe available; what they showed on RF01 is in
+`analysis/noise_decomp/REVIEW.md`. **`--noise off` is not a deterministic
+control** — it is 14–16% worse than the model's own conditional mean at one
+step. The deterministic control is RF02.
+
+Output lands in `$EVAL_ROOT/<exp>.S<seed>.eval-<pass>[-<noise>]`, default
+`$PSCRATCH/sep26-eval`.
+
+---
+
 ## Cards: 40 GB is enough (measured)
 
 | arm | peak MiB / 40,960 | s/batch 40 GB | s/batch 80 GB |
@@ -185,8 +221,9 @@ run trained before it.
 uv run --extra dev python -m pytest configs/experiments/e3sm_sep26_atm/test_campaign.py
 ```
 
-61 tests. Half are mutation tests: each breaks one thing in a generated config
-and asserts the checker notices. `check_campaign.py` duplicates the generator's
+91 tests: the generator and checker, the ported loss fixes, and the offline
+evaluation generator. Half are mutation tests: each breaks one thing in a
+generated config and asserts the checker notices. `check_campaign.py` duplicates the generator's
 tables on purpose — a checker that imports them can only prove the generator is
 self-consistent.
 
@@ -217,7 +254,9 @@ template was copied from it and five arms difference against those three seeds.
 | `TODO.md` | what is left |
 | `AGENTS.md` | history |
 | `make_campaign.py` | run list, axis tables, guards, generator |
+| `make_eval_config.py` | offline evaluation configs, both passes |
 | `check_campaign.py` | asserts each config agrees with its run id |
 | `test_campaign.py` | unit + mutation tests |
 | `analysis/` | Tier 0 reads, card sweep, upstream-fix verification |
+| `analysis/noise_decomp/` | what the conditioning noise does to a trajectory |
 | `runs/` | generated; do not hand-edit |

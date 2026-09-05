@@ -1,0 +1,10 @@
+mean over the rollout of the area-weighted correction magnitude (normalized units) per variable
+             run           PS        STW_0        STW_4        STW_7 surface_precipitation_rate         FLUT         FSNS
+         S02_off      0.04893            0    5.102e-05    8.066e-08       0.3475            0      0.01275
+       S02_fresh      0.05038            0    6.766e-05     5.13e-07       0.3687    6.909e-10      0.01713
+         S03_off      0.02933            0    2.647e-05    8.192e-06       0.2718     1.08e-08     0.007884
+       S03_fresh      0.02939            0    4.122e-05    4.658e-06       0.2958            0      0.01306
+      S01_fresh2       0.0593            0    3.974e-05    7.227e-07       0.3783            0      0.01604
+        S01_half      0.05912            0    2.909e-05    6.633e-07        0.393            0      0.01581
+       S01_mean8      0.05905            0    1.808e-05    3.394e-07       0.3791            0      0.01597
+S01_ens4_nofiles      0.05925            0    4.077e-05    5.387e-07       0.3788            0      0.01603

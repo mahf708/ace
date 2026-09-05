@@ -117,8 +117,8 @@ default off, so sep26 can run an arm on each side of it.
 
 ### B5. `get_crps` epsilon is `(1-alpha)/2` — DONE, on a branch
 Exact at `M2`, 0.89% out at `M3`, 1.16% at `M4` (MEASURED against the analytic
-AIFS definition). One line. `validate()` refuses `Y1` away from `M2` until it
-lands, so no run is currently wrong.
+AIFS definition). One line, ported onto this branch; `validate()` no longer
+restricts `Y1` to `M2`. No run in the list was wrong either way, since OI04 is `M2`.
 
 ---
 
@@ -179,16 +179,38 @@ quietly become a deterministic model and its CRPS is MAE. E01 grows to ±5.0%
 `analysis/noise_amplitude.py` reads it from a checkpoint directory today; it
 belongs in the training loop as a scalar.
 
-### D1. Evaluation harness
-Nothing exists. **Both inline rollout blocks run one member per initial
-condition**, so nothing currently measures calibration, spread, or any proper
-finite-ensemble score — the campaign cannot yet answer its own main question.
-This is a launch gate, not a nice-to-have. Needs `config-eval-ensemble.yaml`, `make_eval_config.py`,
-`sbatch-scripts/run-eval.sh`, `submit-eval.sh`. **The generator must do the
-IC-divisibility arithmetic itself** — `InferenceEvaluatorConfig` has no such
-check (only `InlineInferenceConfig` does), so a mismatch surfaces as a bare
-`AssertionError` minutes into an allocation. Pass 1 (scores, ~100 node-h for
-sixteen arms), pass 2 (trajectories, cap ~0.5 TB).
+### D1. Evaluation harness — BUILT
+Both inline rollout blocks run one member per initial condition, so nothing in
+training measures calibration, spread, or any proper finite-ensemble score.
+That was the launch gate. `make_eval_config.py`, `sbatch-scripts/run-eval.sh`
+and `sbatch-scripts/submit-eval.sh` now exist, with 14 tests in
+`test_campaign.py`.
+
+* **Two passes.** `scores` = members per IC, no trajectory files, `ensembles`
+  aggregators at 6 h / 1 d / 5 d / 30 d / 90 d / 1 y. `traj` = one member,
+  prediction files written. The generator refuses an ensemble on the
+  trajectory pass: per-trajectory statistics must be computed inside a
+  trajectory, and averaging four members costs 8–41% of the variance
+  (`analysis/noise_decomp/results/ens4_mean_vs_member.txt`).
+* **IC divisibility, twice.** `InferenceEvaluatorConfig.__post_init__` now
+  calls `loader.validate_initial_conditions_divisible()`, so the bare
+  `AssertionError` inside `InferenceDataset.__getitem__` cannot be reached
+  from a config; the generator repeats the arithmetic where the node count is
+  chosen and names the node counts that would work.
+* **Ensemble scores now reach disk.** `InferenceEvaluatorAggregator.
+  flush_diagnostics` wrote only the non-ensemble sub-aggregators, so CRPS, SSR
+  bias and ensemble-mean RMSE existed only in W&B. Fixed with a test.
+* **The file glob is narrowed to the reachable years.** The template's pattern
+  matches all 1,501 monthly files because training reads them all; an
+  evaluation reads only from its ICs forward. MEASURED on 2026-09-04, three
+  jobs sharing the filesystem: the full glob had every rank in uninterruptible
+  I/O wait past 17 minutes, while the narrowed one (120 files) opened in ~5 and
+  was at window 5 of 73 by then.
+* **8 ICs, not 16**, until the DVS stall is understood; the default says why.
+
+Left: cost the two passes properly (pass 1 was estimated at ~100 node-h for
+sixteen arms; the first timed run will replace that), and cap pass 2's output
+(~0.5 TB at three fields).
 
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until

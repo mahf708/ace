@@ -1,0 +1,63 @@
+== Tat2m  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:      282.9     13.05  -0.771   0.332   target:      280.2     20.94  -1.205   1.083
+       S02_fresh  pred:      280.3     20.68  -1.179   1.004   target:      280.2     20.94  -1.205   1.083
+         S03_off  pred:      280.6      18.4  -1.329   1.729   target:      280.2     20.94  -1.205   1.083
+       S03_fresh  pred:      280.3     19.98  -1.227   1.205   target:      280.2     20.94  -1.205   1.083
+      S01_fresh2  pred:      280.2     20.66  -1.183   1.019   target:      280.2     20.94  -1.205   1.083
+        S01_half  pred:      280.3     20.42  -1.238   1.231   target:      280.2     20.94  -1.205   1.083
+       S01_mean8  pred:      280.2     20.98  -1.197   1.048   target:      280.1     21.13  -1.210   1.089
+S01_ens4_nofiles  pred:      280.2     20.76  -1.183   1.017   target:      280.1     21.13  -1.210   1.089
+== surface_precipitation_rate  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:  3.224e-05 5.535e-05   6.972  80.303   target:    3.4e-05 7.087e-05   5.745  55.396
+       S02_fresh  pred:  3.505e-05 7.094e-05   5.946  58.086   target:    3.4e-05 7.087e-05   5.745  55.396
+         S03_off  pred:  2.942e-05 6.067e-05   6.398  65.510   target:    3.4e-05 7.087e-05   5.745  55.396
+       S03_fresh  pred:  3.283e-05 6.581e-05   6.190  63.778   target:    3.4e-05 7.087e-05   5.745  55.396
+      S01_fresh2  pred:  3.466e-05 7.273e-05   6.050  61.140   target:    3.4e-05 7.087e-05   5.745  55.396
+        S01_half  pred:  3.529e-05 7.637e-05   6.107  62.423   target:    3.4e-05 7.087e-05   5.745  55.396
+       S01_mean8  pred:  3.376e-05  7.27e-05   6.220  67.248   target:  3.325e-05 7.144e-05   5.754  56.141
+S01_ens4_nofiles  pred:  3.483e-05 7.281e-05   6.071  61.618   target:  3.325e-05 7.144e-05   5.754  56.141
+== U_6  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:      1.867     5.361   0.173   0.741   target:       2.21     8.598   0.563   0.374
+       S02_fresh  pred:      2.034     8.648   0.560   0.392   target:       2.21     8.598   0.563   0.374
+         S03_off  pred:    -0.3114      7.11   0.094   0.716   target:       2.21     8.598   0.563   0.374
+       S03_fresh  pred:      1.567     7.841   0.592   0.841   target:       2.21     8.598   0.563   0.374
+      S01_fresh2  pred:      2.018     8.659   0.540   0.375   target:       2.21     8.598   0.563   0.374
+        S01_half  pred:      1.767     9.321   0.474   0.226   target:       2.21     8.598   0.563   0.374
+       S01_mean8  pred:      2.151     8.779   0.547   0.310   target:      2.287     8.625   0.587   0.410
+S01_ens4_nofiles  pred:      2.106     8.653   0.560   0.392   target:      2.287     8.625   0.587   0.410
+== FLUT  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:      225.7     35.22   0.232  -0.693   target:      225.8      47.5  -0.120  -0.632
+       S02_fresh  pred:      226.6     47.08  -0.114  -0.649   target:      225.8      47.5  -0.120  -0.632
+         S03_off  pred:      216.7     43.19  -0.088  -0.530   target:      225.8      47.5  -0.120  -0.632
+       S03_fresh  pred:      222.1     46.23  -0.035  -0.681   target:      225.8      47.5  -0.120  -0.632
+      S01_fresh2  pred:      226.3     47.15  -0.112  -0.641   target:      225.8      47.5  -0.120  -0.632
+        S01_half  pred:      226.6     46.12  -0.203  -0.565   target:      225.8      47.5  -0.120  -0.632
+       S01_mean8  pred:      226.1     47.35  -0.124  -0.629   target:      225.7     47.78  -0.123  -0.635
+S01_ens4_nofiles  pred:      226.3     47.24  -0.117  -0.649   target:      225.7     47.78  -0.123  -0.635
+== T_7  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:      280.7     11.86  -0.656  -0.111   target:      278.9     17.46  -0.837   0.079
+       S02_fresh  pred:        279      17.2  -0.797  -0.021   target:      278.9     17.46  -0.837   0.079
+         S03_off  pred:      279.1     15.33  -0.971   0.498   target:      278.9     17.46  -0.837   0.079
+       S03_fresh  pred:      278.9     16.61  -0.860   0.148   target:      278.9     17.46  -0.837   0.079
+      S01_fresh2  pred:      278.9     17.17  -0.809   0.009   target:      278.9     17.46  -0.837   0.079
+        S01_half  pred:      278.9     16.93  -0.862   0.157   target:      278.9     17.46  -0.837   0.079
+       S01_mean8  pred:      278.9     17.46  -0.828   0.050   target:      278.8     17.61  -0.842   0.094
+S01_ens4_nofiles  pred:      278.9     17.28  -0.808   0.003   target:      278.8     17.61  -0.842   0.094
+== PS  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:  9.703e+04      8182  -2.534   5.788   target:  9.667e+04      9289  -2.457   5.333
+       S02_fresh  pred:  9.671e+04      9204  -2.458   5.345   target:  9.667e+04      9289  -2.457   5.333
+         S03_off  pred:  9.703e+04      8812  -2.498   5.528   target:  9.667e+04      9289  -2.457   5.333
+       S03_fresh  pred:  9.679e+04      9096  -2.478   5.436   target:  9.667e+04      9289  -2.457   5.333
+      S01_fresh2  pred:  9.672e+04      9233  -2.452   5.323   target:  9.667e+04      9289  -2.457   5.333
+        S01_half  pred:  9.667e+04      9290  -2.446   5.296   target:  9.667e+04      9289  -2.457   5.333
+       S01_mean8  pred:  9.665e+04      9314  -2.452   5.304   target:  9.666e+04      9349  -2.453   5.311
+S01_ens4_nofiles  pred:  9.669e+04      9263  -2.452   5.315   target:  9.666e+04      9349  -2.453   5.311
+== Qat2m  pooled (space x time) moments from 200-bin histograms: mean std skew exkurt
+         S02_off  pred:   0.007774  0.004554   0.420  -0.945   target:   0.008038  0.006408   0.567  -0.958
+       S02_fresh  pred:   0.008054  0.006421   0.568  -0.963   target:   0.008038  0.006408   0.567  -0.958
+         S03_off  pred:   0.008017  0.005571   0.342  -1.073   target:   0.008038  0.006408   0.567  -0.958
+       S03_fresh  pred:    0.00797  0.006054   0.508  -0.952   target:   0.008038  0.006408   0.567  -0.958
+      S01_fresh2  pred:   0.007982  0.006343   0.563  -0.969   target:   0.008038  0.006408   0.567  -0.958
+        S01_half  pred:   0.007896  0.006144   0.546  -0.969   target:   0.008038  0.006408   0.567  -0.958
+       S01_mean8  pred:   0.008028  0.006407   0.571  -0.966   target:   0.008056  0.006453   0.571  -0.955
+S01_ens4_nofiles  pred:   0.008014  0.006398   0.572  -0.959   target:   0.008056  0.006453   0.571  -0.955

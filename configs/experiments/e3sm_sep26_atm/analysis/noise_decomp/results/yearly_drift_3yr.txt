@@ -1,0 +1,50 @@
+
+#### S01_off_3yr: 4 trajectories, 4380 valid steps = 3 full years
+== Tat2m   (mean ± std across trajectories)
+ year           bias_rms          tstd_pred          tstd_targ  pred-targ %
+    1    0.7821 ± 0.077      4.487 ± 0.044      4.684 ± 0.037         -4.2%
+    2    0.9959 ± 0.052      4.337 ± 0.037      4.705 ± 0.041         -7.8%
+    3    0.9786 ± 0.073      4.302 ± 0.018      4.691 ± 0.029         -8.3%
+== PS   (mean ± std across trajectories)
+ year           bias_rms          tstd_pred          tstd_targ  pred-targ %
+    1       189 ± 8.3        730.2 ± 4.3        679.6 ± 4.7            7.4%
+    2     225.7 ± 17           711 ± 3.9        680.6 ± 5.9            4.5%
+    3     204.5 ± 27         702.5 ± 8.9        678.2 ± 6              3.6%
+== surface_precipitation_rate   (mean ± std across trajectories)
+ year           bias_rms          tstd_pred          tstd_targ  pred-targ %
+    1 1.297e-05 ± 5.8e-07 7.519e-05 ± 6e-07  6.818e-05 ± 1e-06         10.3%
+    2 1.708e-05 ± 1e-06  7.397e-05 ± 7.6e-07 6.881e-05 ± 8.4e-07         7.5%
+    3 1.712e-05 ± 7.1e-07 7.351e-05 ± 1.3e-06 6.802e-05 ± 1.1e-06         8.1%
+== FLUT   (mean ± std across trajectories)
+ year           bias_rms          tstd_pred          tstd_targ  pred-targ %
+Traceback (most recent call last):
+  File "/pscratch/sd/m/mahf708/ace-sep26/.venv/lib/python3.13/site-packages/xarray/core/dataset.py", line 1301, in _construct_dataarray
+    variable = self._variables[name]
+               ~~~~~~~~~~~~~~~^^^^^^
+KeyError: 'FLUT'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/pscratch/sd/m/mahf708/ace-sep26/.venv/lib/python3.13/site-packages/xarray/core/dataset.py", line 1408, in __getitem__
+    return self._construct_dataarray(key)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/pscratch/sd/m/mahf708/ace-sep26/.venv/lib/python3.13/site-packages/xarray/core/dataset.py", line 1303, in _construct_dataarray
+    _, name, variable = _get_virtual_variable(self._variables, name, self.sizes)
+                        ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/pscratch/sd/m/mahf708/ace-sep26/.venv/lib/python3.13/site-packages/xarray/core/dataset_utils.py", line 79, in _get_virtual_variable
+    raise KeyError(key)
+KeyError: 'FLUT'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/pscratch/sd/m/mahf708/ace-sep26/configs/experiments/e3sm_sep26_atm/analysis/noise_decomp/yearly_drift.py", line 64, in <module>
+    main()
+    ~~~~^^
+  File "/pscratch/sd/m/mahf708/ace-sep26/configs/experiments/e3sm_sep26_atm/analysis/noise_decomp/yearly_drift.py", line 52, in main
+    p = pred[v].isel(sample=s_, time=sl).values.astype(np.float32)
+        ~~~~^^^
+  File "/pscratch/sd/m/mahf708/ace-sep26/.venv/lib/python3.13/site-packages/xarray/core/dataset.py", line 1421, in __getitem__
+    raise KeyError(message) from e
+KeyError: "No variable named 'FLUT'. Variables on the dataset include ['Tat2m', 'surface_precipitation_rate', 'PS', 'time', 'init_time', 'valid_time', 'lat', 'lon']"

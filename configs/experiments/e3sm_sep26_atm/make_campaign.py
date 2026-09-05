@@ -132,11 +132,10 @@ ROLLOUT: dict[str, tuple[int | dict[int, float], bool]] = {
     "3": ({1: 0.6, 2: 0.2, 4: 0.2}, True),
     "4": ({1: 0.6, 2: 0.2, 4: 0.1, 12: 0.05, 20: 0.05}, True),
 }
-# Y -- almost_fair_crps_alpha.  get_crps uses epsilon = (1 - alpha) / 2, but
-# AIFS-CRPS (arXiv:2412.15832) defines it as (1 - alpha) / n_ensemble.  The two
-# agree only at M2.  MEASURED against the analytic definition: exact at M2, off
-# by 0.89% at M3 and 1.16% at M4 (analysis/loss_semantics.py).  validate()
-# therefore refuses Y1 anywhere but M2.
+# Y -- almost_fair_crps_alpha.  get_crps used to hard-code epsilon =
+# (1 - alpha) / 2, which agrees with the AIFS-CRPS definition
+# (arXiv:2412.15832, (1 - alpha) / n_ensemble) only at M2; it now scales with
+# the ensemble size (B5, ported), so Y1 is valid at any member count.
 ALPHA = {"0": 1.0, "1": 0.95}
 NOISE_DIM = {"0": 0, "1": 32, "2": 64}  # Z
 
@@ -340,8 +339,9 @@ RUNLIST: list[Experiment] = [
     # difference is loss geometry (L1 against L2) and the column difference is
     # noise conditioning with nothing in the objective rewarding it.
     #
-    # G1 (pure CRPS) is required on the D0 row: get_energy_score supports exactly
-    # two members, so G0 at M1 raises on the first training batch.
+    # G1 (pure CRPS) on the D0 row: at one member the CRPS pairwise term is
+    # exactly zero, so this row is MAE. (G0 at M1 used to raise on the first
+    # batch; B2 lifted that, but G1 keeps the row a pure loss-geometry contrast.)
     Experiment(
         "LG01",
         Word.of(G="1", M="1", Z="0"),
@@ -443,9 +443,9 @@ RUNLIST: list[Experiment] = [
     Experiment(
         "OI04",
         Word.of(Y="1"),
-        "almost-fair CRPS at alpha 0.95. Only valid at M2: get_crps uses "
-        "epsilon (1-alpha)/2 where AIFS defines (1-alpha)/M, and those agree "
-        "only at two members",
+        "almost-fair CRPS at alpha 0.95 at two members, where the pairwise "
+        "term is a single pair and estimator noise is largest. epsilon now "
+        "scales as (1-alpha)/M (B5), so the arm is valid at any M",
         priority=4,
     ),
     # -- rollout -------------------------------------------------------------

@@ -90,3 +90,22 @@ are single-process and need no arguments.
 sweep behind the cost model. `epoch_stability.py`, `rollout_stability.py` —
 the Tier 0 reads on how early an arm can be judged.
 `verify_mode_weights_fix.py` — the one-line upstream fix for `G2`.
+
+## noise_decomp/ — what the conditioning noise does at inference
+
+Ran 2026-09-04 on RF01's three seeds; written up in `noise_decomp/REVIEW.md`,
+tables in `noise_decomp/results/`. Needs the `stepper_override.noise` knob on
+this branch.
+
+| script | question | answer |
+|---|---|---|
+| `one_step_drift.py` | is the noise-off backbone the model's mean? | **no** — averaging over the noise cuts one-step error 14–16%, and the drift is aligned with the error in 128 of 128 states |
+| `make_eval.py`, `run_eval.sh` | the rollout ladder: off / fresh / fixed / half / double / mean / ensemble | 23 rollouts on held-out 2040s ICs |
+| `summarize.py` | time-mean bias, spectra and pooled tails per mode | noise off inflates the 1-year time-mean bias 4–8× and drops 0.15–0.7 dex of small-scale power |
+| `traj_stats.py` | statistics **inside** one trajectory, prediction and target alike | fresh noise puts variance, lag-1-day persistence and the 0.1/99.9% quantiles within 1–2 target σ |
+| `yearly_drift.py` | does the first-year result hold to three years? | the variance and tail result does; the mean-state result does not |
+
+The generalisable finding for the campaign: **`noise off` at inference is not a
+deterministic control.** It is the stochastic model with its mean pathway
+removed, and it is a worse operator than the model's own conditional mean. The
+deterministic control is RF02.
