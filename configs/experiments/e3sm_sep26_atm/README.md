@@ -189,6 +189,15 @@ narrow in the core and too wide in the tails passes the first and fails the
 second, and since the arms here differ in exactly how their loss shapes a
 distribution, that is the distinction the campaign is built to see.
 
+**Pin the weights before comparing anything.** An arm still training rewrites
+`best_ckpt.tar` whenever validation improves — E01.S02's moved at 17:20 on
+2026-09-05, twenty minutes before an evaluation read it. A single run is still
+valid; what breaks is the comparison, which quietly becomes a contrast between
+epochs in favour of whichever arm was scored later. Copy the checkpoints
+somewhere stable and pass `--checkpoint <dir>`. The generated `eval.env` records
+the path, size and mtime of what was read, so two eval directories can be
+checked against each other rather than assumed equal.
+
 Output lands in `$EVAL_ROOT/<exp>.S<seed>.eval-<pass>[-<noise>]`, default
 `$PSCRATCH/sep26-eval`. `analysis/eval_table.py` reads it. Start with `--seeds`:
 the seed-to-seed spread of one arm is the floor every comparison is measured
