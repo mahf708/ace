@@ -83,13 +83,30 @@ RF01.S01, one checkpoint, four ways of driving the same weights. CRPS on Tat2m:
   and is the one that disagrees between seeds -- which is also where the seed
   floor is widest, so that is expected rather than surprising.
 
-  So the trained amplitude is right for the leads the objective scores and too
-  small for the annual climate, and the fix is an inference-time knob rather
-  than a retrain: a third off the annual temperature error for one extra
-  inference. Two consequences for the campaign. **Score every arm at `keep`**,
-  so comparisons are not confounded by an amplitude choice. And **no single
-  amplitude is "calibrated"** -- which is worth saying out loud before anyone
-  tunes one against a single lead.
+  **What improves is the ensemble, not the trajectory.** The year-mean bias of
+  the trajectories themselves goes the other way, and `keep` wins it:
+
+  | RF01.S01, year-mean | Tat2m bias RMS | PS bias RMS |
+  |---|---|---|
+  | `keep` | **1.336 K** | **288 Pa** |
+  | `double` | 1.556 K | 370 Pa |
+  | `half` | 2.174 K | 492 Pa |
+  | `off` | 2.340 K | 542 Pa |
+
+  So doubling widens an ensemble that is displaced and under-dispersed at one
+  year, which improves CRPS and the ensemble mean, while each individual
+  trajectory drifts slightly further. That reconciles this with
+  `analysis/noise_decomp/`, which measured single trajectories and found
+  `double` worse at one year: both are right about different quantities, and
+  the disagreement was mine for not naming which.
+
+  **Which one matters depends on the claim.** This campaign is building an
+  emulator, so single-trajectory climate is usually the target, and there
+  `keep` is the best amplitude at every lead. For a one-year *ensemble
+  forecast*, a larger amplitude is better. Two consequences either way.
+  **Score every arm at `keep`**, so comparisons are not confounded by an
+  amplitude choice. And **no single amplitude is "calibrated"** -- the number
+  that calibrates one lead, or one quantity, decalibrates another.
 * **The noise has to be refreshed, but not immediately.** `fixed` reuses one
   latent field for the whole trajectory. At 6 h it is identical to `keep` by
   construction (same first draw) and at 1 d it is a near-tie -- `keep` wins on
