@@ -109,3 +109,20 @@ The generalisable finding for the campaign: **`noise off` at inference is not a
 deterministic control.** It is the stochastic model with its mean pathway
 removed, and it is a worse operator than the model's own conditional mean. The
 deterministic control is RF02.
+
+
+## `rf01_scores/`
+
+The first offline scoring of RF01, 2026-09-05, from one four-node allocation:
+fourteen scores-pass runs across the noise ladder, three seeds, and three seeds
+pinned to a common epoch.
+
+| | |
+|---|---|
+| `FINDINGS.md` | the seed floor, the noise ladder, and why epoch was not the story |
+
+The one number to carry away: **at 90 days the seed-to-seed spread in
+ensemble-mean RMSE is 29% for 2 m temperature and 34% for surface temperature,
+epoch-matched, at three seeds** -- so a climate-range temperature comparison
+between arms needs an effect of about a third to be readable. Precipitation,
+outgoing longwave and the winds stay inside 8% and can be read.
