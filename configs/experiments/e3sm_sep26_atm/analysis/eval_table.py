@@ -184,10 +184,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Several roots merge into one table so that, say, an epoch-matched set can
-    # be read beside the default one. A later root wins a repeated key.
+    # be read beside the default one. They hold the same arms and seeds, so
+    # roots after the first are tagged by directory name and enter as extra
+    # "noise" modes -- which is what they are, another single-factor change to
+    # the same weights, and it puts them straight into --ladder against keep.
     data: dict = {}
-    for root in args.root:
-        data.update(collect(root))
+    for index, root in enumerate(args.root):
+        found = collect(root)
+        if index:
+            tag = os.path.basename(root.rstrip("/"))
+            found = {(a, s, f"{n}@{tag}"): v for (a, s, n), v in found.items()}
+        data.update(found)
     if not data:
         print(f"no scores-pass output under {' '.join(args.root)}", file=sys.stderr)
         return 1
