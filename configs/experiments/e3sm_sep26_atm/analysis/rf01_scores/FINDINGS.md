@@ -61,18 +61,35 @@ RF01.S01, one checkpoint, four ways of driving the same weights. CRPS on Tat2m:
   one day, which is nominally perfect calibration, while making ensemble-mean
   RMSE **64% worse** (0.392 -> 0.642 K) and CRPS 50% worse. The same pattern
   holds on PS (ssr_bias -0.063 -> -0.097, RMSE 49.3 -> 117.7) and FLUT
-  (-0.046 -> +0.155, RMSE 10.0 -> 18.4). Spread-skill is a ratio and is
-  satisfied by inflating the spread and the error together; `rank_dispersion`
-  reads -0.28 (over-dispersed) and ranks the five modes the way CRPS does.
-  **Tuning a stochastic model to `ssr_bias` = 0 would have chosen this.** That
-  is the argument for the rank statistics, demonstrated rather than asserted.
-* **At one year, doubling helps, on everything.** CRPS 2.37 -> 1.48, RMSE
-  3.20 -> 2.14, both calibration statistics closer to zero, and likewise for PS
-  and FLUT. At ninety days it moves the other way. Recorded as observed: eight
-  initial conditions make the annual numbers the least stable here, and one
-  non-monotonic pair is not a mechanism. If it survives more initial conditions
-  it is a real finding -- the trained amplitude would be right for weather and
-  too small for climate stability -- and it is cheap to test.
+  (-0.046 -> +0.155, RMSE 10.0 -> 18.4), and on all three seeds -- `ssr_bias`
+  goes to -0.0002 / -0.0078 / -0.0051 while RMSE worsens by 63.6% / 59.9% /
+  57.3%. Spread-skill is a ratio and is satisfied by inflating the spread and
+  the error together; `rank_dispersion` reads -0.28 (over-dispersed) and ranks
+  the five modes the way CRPS does. **Tuning a stochastic model to `ssr_bias`
+  = 0 would have chosen this.** That is the argument for the rank statistics,
+  demonstrated rather than asserted.
+* **The best amplitude depends on the lead, and the crossover is between 30 and
+  90 days.** Checked on all three seeds. `double` against `keep`, percent change
+  in ensemble-mean RMSE for Tat2m (negative is better):
+
+  | seed | 6 h | 1 d | 5 d | 30 d | 90 d | 1 y |
+  |---|---|---|---|---|---|---|
+  | S01 | +55.8% | +63.6% | +56.6% | +35.0% | +17.1% | **-33.3%** |
+  | S02 | +55.3% | +59.9% | +63.5% | +29.5% | -36.8% | **-35.8%** |
+  | S03 | +48.7% | +57.3% | +51.1% | +8.0% | -14.8% | **-42.3%** |
+
+  Consistently much worse in the weather range, consistently much better at one
+  year, on every seed; CRPS says the same. The 90-day column is where it flips
+  and is the one that disagrees between seeds -- which is also where the seed
+  floor is widest, so that is expected rather than surprising.
+
+  So the trained amplitude is right for the leads the objective scores and too
+  small for the annual climate, and the fix is an inference-time knob rather
+  than a retrain: a third off the annual temperature error for one extra
+  inference. Two consequences for the campaign. **Score every arm at `keep`**,
+  so comparisons are not confounded by an amplitude choice. And **no single
+  amplitude is "calibrated"** -- which is worth saying out loud before anyone
+  tunes one against a single lead.
 * **The noise has to be refreshed, but not immediately.** `fixed` reuses one
   latent field for the whole trajectory. At 6 h it is identical to `keep` by
   construction (same first draw) and at 1 d it is a near-tie -- `keep` wins on
@@ -139,5 +156,7 @@ when the measured failure is that it is displaced. **At climate leads
    90-day or annual temperature drift between arms at three seeds.
 2. Score at 90 d rather than 1 y when a stable number is wanted at 8 ICs.
 3. Pin checkpoints before any cross-arm comparison.
-4. RF02 remains the only control that can answer "does stochastic training beat
+4. Score arms at `keep`. The amplitude ladder is a separate axis, and mixing it
+   into an arm comparison confounds two changes.
+5. RF02 remains the only control that can answer "does stochastic training beat
    deterministic"; nothing in this file substitutes for it.
