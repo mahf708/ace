@@ -793,3 +793,19 @@ def test_the_whole_held_out_block_is_the_default():
     template_ics = ev._test_block(ev._template())["loader"]["start_indices"]["times"]
     assert ev.DEFAULT_ICS == len(template_ics)
     assert not hasattr(ev, "STALLING_ICS")
+
+
+def test_eval_refuses_to_write_through_a_symlinked_output_dir(tmp_path):
+    """A symlinked eval directory sends the config into another run's folder and
+    overwrites its record of which weights produced the results already there.
+    That is silent, and it survived once only because nothing rewrites the
+    netCDFs."""
+    import make_eval_config as ev
+
+    real = tmp_path / "real"
+    (real / "RF01.S01.eval-scores").mkdir(parents=True)
+    link_root = tmp_path / "linked"
+    link_root.mkdir()
+    (link_root / "RF01.S01.eval-scores").symlink_to(real / "RF01.S01.eval-scores")
+    assert ev.main(["RF01.S01", "--out", str(link_root), "--no-wandb"]) == 2
+    assert not (real / "RF01.S01.eval-scores" / "config.yaml").exists()

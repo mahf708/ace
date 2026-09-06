@@ -521,6 +521,16 @@ def main(argv: list[str] | None = None) -> int:
         evalid = eval_id(label, args.which_pass, args.noise)
         out_dir = os.path.join(out_root, evalid)
         try:
+            if os.path.islink(out_dir):
+                # Writing through a symlink puts this config in some other
+                # run's directory and overwrites its record of which weights
+                # produced the results already sitting there. That happened
+                # once, to a finished run, and only the fact that nothing
+                # rewrites the netCDFs saved the results.
+                raise EvalError(
+                    f"{out_dir} is a symlink; refusing to write a config "
+                    "through it. Point --out at a real directory."
+                )
             config = build(
                 runid=runid,
                 checkpoint=args.checkpoint or ckpt_dir,
