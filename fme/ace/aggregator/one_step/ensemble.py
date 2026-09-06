@@ -213,6 +213,12 @@ class _RankHistogramMetric(ReducedMetric):
         tied = (gen == target).sum(dim=1)
         # Normalised mid-rank in (0, 1): under calibration its mean is 1/2.
         u = (below + 0.5 * tied + 0.5) / (n_ensemble + 1)
+        # Comparisons against NaN are all False, which would put the rank at
+        # the bottom of the histogram and read as a strong calibration signal.
+        # A variable whose target is missing has no rank; say so, the way the
+        # other metrics do by propagating the NaN through their means.
+        missing = torch.isnan(target).any(dim=1) | torch.isnan(gen).any(dim=1)
+        u = torch.where(missing, torch.full_like(u, float("nan")), u)
         highest = gen.amax(dim=1)
         # A prescribed cell (every member equal to the target, e.g. SST over
         # ocean) is a genuine 0/0 rather than a collapsed ensemble.

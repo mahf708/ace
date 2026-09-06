@@ -556,3 +556,17 @@ def test_aggregator_reports_the_rank_metrics():
     assert "test/rank_bias/a" in logs
     assert "test/rank_dispersion/a" in logs
     assert "rank_dispersion-a" in aggregator.get_dataset().data_vars
+
+
+def test_rank_metrics_are_nan_where_the_target_is_missing():
+    """Comparisons against NaN are all False, which would put the rank at the
+    bottom of the histogram and read as a strong calibration signal. A missing
+    target has no rank, and the metric says so rather than inventing one."""
+    target = torch.randn(4, 1, 1, 2, 2)
+    target[:, :, :, 0, 0] = float("nan")
+    gen = torch.randn(4, 3, 1, 2, 2)
+    for metric in (RankBiasMetric(), RankDispersionMetric()):
+        metric.record(target=target, gen=gen)
+        got = metric.get()
+        assert torch.isnan(got[0, 0])
+        assert torch.isfinite(got[1, 1])
