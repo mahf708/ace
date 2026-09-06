@@ -46,18 +46,33 @@ RF01.S01, one checkpoint, four ways of driving the same weights. CRPS on Tat2m:
 
 | mode | 6 h | 1 d | 5 d | 30 d | 90 d | 1 y |
 |---|---|---|---|---|---|---|
-| `keep` (trained) | **0.1553** | 0.2646 | **0.5725** | **1.0029** | **1.0878** | **2.3718** |
+| `keep` (trained) | **0.1553** | 0.2646 | **0.5725** | **1.0029** | **1.0878** | 2.3718 |
 | `fixed` (one latent, held) | 0.1553 | **0.2623** | 0.5897 | 1.4687 | 2.5046 | 2.8998 |
 | `half` (amplitude x0.5) | 0.1825 | 0.3456 | 0.8492 | 1.1183 | 2.3448 | 2.8115 |
+| `double` (amplitude x2) | 0.2166 | 0.3982 | 0.9271 | 1.5095 | 1.4231 | **1.4812** |
 | `off` (silenced) | 0.2428 | 0.4805 | 1.3633 | 1.5756 | 2.7121 | 3.0988 |
 
 * **The trained amplitude is not a calibration problem to fix downward.**
   Halving it makes the ensemble markedly under-dispersed on both statistics
   (`ssr_bias` -0.091 to -0.370, `rank_dispersion` +0.070 to +0.524 at 1 d) and
-  costs 31% of CRPS. `keep` is only 7-9% under-dispersed to begin with, so the
-  calibrated amplitude is near 1.1 rather than 0.5 -- which is why the ladder
-  gained a `double` rung, since with only `half` below 1.0 it could never
-  conclude more than "not smaller".
+  costs 31% of CRPS.
+* **Nor upward at weather leads -- and this is the case that separates the two
+  calibration statistics.** Doubling the amplitude puts `ssr_bias` at -0.0002 at
+  one day, which is nominally perfect calibration, while making ensemble-mean
+  RMSE **64% worse** (0.392 -> 0.642 K) and CRPS 50% worse. The same pattern
+  holds on PS (ssr_bias -0.063 -> -0.097, RMSE 49.3 -> 117.7) and FLUT
+  (-0.046 -> +0.155, RMSE 10.0 -> 18.4). Spread-skill is a ratio and is
+  satisfied by inflating the spread and the error together; `rank_dispersion`
+  reads -0.28 (over-dispersed) and ranks the five modes the way CRPS does.
+  **Tuning a stochastic model to `ssr_bias` = 0 would have chosen this.** That
+  is the argument for the rank statistics, demonstrated rather than asserted.
+* **At one year, doubling helps, on everything.** CRPS 2.37 -> 1.48, RMSE
+  3.20 -> 2.14, both calibration statistics closer to zero, and likewise for PS
+  and FLUT. At ninety days it moves the other way. Recorded as observed: eight
+  initial conditions make the annual numbers the least stable here, and one
+  non-monotonic pair is not a mechanism. If it survives more initial conditions
+  it is a real finding -- the trained amplitude would be right for weather and
+  too small for climate stability -- and it is cheap to test.
 * **The noise has to be refreshed, but not immediately.** `fixed` reuses one
   latent field for the whole trajectory. At 6 h it is identical to `keep` by
   construction (same first draw) and at 1 d it is a near-tie -- `keep` wins on
