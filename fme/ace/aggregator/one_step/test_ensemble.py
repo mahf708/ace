@@ -6,6 +6,8 @@ import torch
 from fme.ace.aggregator.one_step.ensemble import (
     CRPSMetric,
     EnsembleMeanRMSEMetric,
+    RankBiasMetric,
+    RankDispersionMetric,
     SSRBiasMetric,
     _EnsembleAggregator,
 )
@@ -422,3 +424,135 @@ def test_aggregator_norm_raises_on_unknown_channel_mean_names():
     )
     with pytest.raises(KeyError, match="not_present"):
         agg.get_logs(label="metrics")
+
+
+def _record_calibrated(metric, n_sample, n_batch=400, shape=(1, 3, 3), seed=0):
+    """Draw target and members from the same distribution, which is what
+    calibration means: the target is exchangeable with the members."""
+    torch.manual_seed(seed)
+    n_time, n_y, n_x = shape
+    both = torch.randn(n_batch, n_sample + 1, n_time, n_y, n_x)
+    metric.record(target=both[:, :1], gen=both[:, 1:])
+    return metric.get()
+
+
+@pytest.mark.parametrize("n_sample", [2, 4, 10])
+def test_rank_metrics_near_zero_on_a_calibrated_ensemble(n_sample):
+    """An ensemble drawn from the truth's own distribution is calibrated by
+    construction, so both rank statistics sit at zero up to sampling noise."""
+    bias = _record_calibrated(RankBiasMetric(), n_sample)
+    dispersion = _record_calibrated(RankDispersionMetric(), n_sample)
+    assert bias.shape == (3, 3)
+    assert bias.abs().mean() < 0.05
+    assert dispersion.abs().mean() < 0.2
+
+
+@pytest.mark.parametrize("n_sample", [2, 4, 10])
+def test_rank_dispersion_reference_is_the_discrete_uniform(n_sample):
+    """The calibrated rank variance is (1 - (M+1)^-2)/12, not 1/12. Feeding
+    exactly uniform ranks must give exactly zero, which the continuous
+    reference would not: at four members it is off by 4%."""
+    metric = RankDispersionMetric()
+    # one sample per rank, so the histogram is exactly flat
+    n_y, n_x = 2, 2
+    members = torch.arange(1.0, n_sample + 1).reshape(1, n_sample, 1, 1, 1)
+    gen = members.expand(n_sample + 1, n_sample, 1, n_y, n_x).contiguous()
+    # target below all members, between each pair, then above all
+    targets = torch.arange(0.5, n_sample + 1).reshape(n_sample + 1, 1, 1, 1, 1)
+    metric.record(target=targets.expand(-1, 1, 1, n_y, n_x), gen=gen)
+    assert torch.allclose(metric.get(), torch.zeros(n_y, n_x), atol=1e-6)
+
+
+def test_rank_dispersion_positive_when_underdispersed():
+    """Members tightly clustered around a centre that is itself far from the
+    truth: the ensemble is narrow relative to its own error, so the target
+    lands outside it and fills the ends of the histogram. This is the U shape
+    a collapsing stochastic model produces."""
+    torch.manual_seed(0)
+    n_batch, n_sample = 500, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    centre = target + torch.randn(n_batch, 1, 1, 2, 2)
+    gen = centre + 0.1 * torch.randn(n_batch, n_sample, 1, 2, 2)
+    metric = RankDispersionMetric()
+    metric.record(target=target, gen=gen)
+    assert metric.get().mean() > 0.5
+
+
+def test_rank_dispersion_negative_when_overdispersed():
+    """Members scattered around the truth itself: the spread is wider than
+    the error of the mean they form, so the target sits inside the ensemble
+    and the histogram is a dome."""
+    torch.manual_seed(0)
+    n_batch, n_sample = 500, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    gen = target + torch.randn(n_batch, n_sample, 1, 2, 2)
+    metric = RankDispersionMetric()
+    metric.record(target=target, gen=gen)
+    assert metric.get().mean() < -0.3
+
+
+def test_rank_dispersion_reaches_minus_one_when_the_target_is_always_centred():
+    """Deterministic members straddling the target put its rank at the centre
+    every time, so the rank variance is zero: the floor of the statistic."""
+    n_batch, n_y, n_x = 6, 2, 2
+    target = torch.randn(n_batch, 1, 1, n_y, n_x)
+    offsets = torch.tensor([-2.0, -1.0, 1.0, 2.0]).reshape(1, 4, 1, 1, 1)
+    metric = RankDispersionMetric()
+    metric.record(target=target, gen=target + offsets)
+    assert torch.allclose(metric.get(), -torch.ones(n_y, n_x), atol=1e-6)
+
+
+def test_rank_bias_sees_an_offset_ensemble_that_ssr_bias_can_miss():
+    """Shift every member up and the ensemble is systematically above the
+    truth. The rank statistic reports the sign; the spread-skill ratio, being
+    a ratio of magnitudes, does not distinguish the direction."""
+    torch.manual_seed(0)
+    n_batch, n_sample = 400, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    gen = target + 1.0 + torch.randn(n_batch, n_sample, 1, 2, 2)
+    metric = RankBiasMetric()
+    metric.record(target=target, gen=gen)
+    # members above the target push its rank down, so the statistic is negative
+    assert metric.get().mean() < -0.1
+
+
+def test_rank_metrics_report_zero_on_a_prescribed_cell():
+    """Every member equal to the target is a genuine 0/0, not a collapse: it
+    must not drag the field mean to the under-dispersed extreme, the same
+    convention ssr_bias already follows."""
+    n_batch, n_sample = 8, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    gen = target.expand(n_batch, n_sample, 1, 2, 2).contiguous()
+    for metric in (RankBiasMetric(), RankDispersionMetric()):
+        metric.record(target=target, gen=gen)
+        assert torch.allclose(metric.get(), torch.zeros(2, 2))
+
+
+def test_rank_metrics_accumulate_across_batches():
+    """The moments are running sums, so one call with 2N samples and two with
+    N must agree."""
+    torch.manual_seed(0)
+    target = torch.randn(20, 1, 1, 2, 2)
+    gen = torch.randn(20, 4, 1, 2, 2)
+    whole = RankDispersionMetric()
+    whole.record(target=target, gen=gen)
+    split = RankDispersionMetric()
+    split.record(target=target[:10], gen=gen[:10])
+    split.record(target=target[10:], gen=gen[10:])
+    assert torch.allclose(whole.get(), split.get(), atol=1e-5)
+
+
+def test_aggregator_reports_the_rank_metrics():
+    """They reach the logs and the dataset alongside crps and ssr_bias, which
+    is what makes them readable offline."""
+    aggregator = _EnsembleAggregator(
+        gridded_operations=LatLonOperations(torch.ones(4, 4).to(get_device()))
+    )
+    aggregator.record_batch(
+        target_data=_make_ensemble_batch(["a"], shape=(2, 1, 1, 4, 4)),
+        gen_data=_make_ensemble_batch(["a"], shape=(2, 3, 1, 4, 4)),
+    )
+    logs = aggregator.get_logs(label="test")
+    assert "test/rank_bias/a" in logs
+    assert "test/rank_dispersion/a" in logs
+    assert "rank_dispersion-a" in aggregator.get_dataset().data_vars

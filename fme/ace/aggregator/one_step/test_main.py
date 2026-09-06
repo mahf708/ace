@@ -75,6 +75,10 @@ def test_labels_exist():
         "test/ensemble/ssr_bias/mean_map/a",
         "test/ensemble/ensemble_mean_rmse/mean_map/a",
         "test/ensemble/ensemble_mean_rmse/a",
+        "test/ensemble/rank_bias/a",
+        "test/ensemble/rank_bias/mean_map/a",
+        "test/ensemble/rank_dispersion/a",
+        "test/ensemble/rank_dispersion/mean_map/a",
     ]
     assert set(summary.logs.keys()) == set(expected_keys)
     assert summary.loss == summary.logs["test/mean/loss"]

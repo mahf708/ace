@@ -173,6 +173,110 @@ class SSRBiasMetric(ReducedMetric):
         return torch.where(prescribed, torch.zeros_like(spread), ssr_bias)
 
 
+class _RankHistogramMetric(ReducedMetric):
+    """
+    Accumulates the first two moments of the ensemble's rank histogram.
+
+    If an ensemble is calibrated, the target is exchangeable with its members,
+    so the target's rank among ``M`` of them is uniform on ``{0..M}``. Two
+    departures from that uniformity are the ones worth naming, and they are
+    the histogram's mean and variance; the subclasses below report one each.
+
+    This is a distribution-free statement, which is why it is worth having
+    next to ``ssr_bias``. The spread-skill ratio compares RMS spread to RMS
+    error: a second-moment claim, dominated by the largest-error cells, and
+    satisfiable by an ensemble of the wrong shape as long as its width is
+    right. The rank histogram is not -- an ensemble that is too narrow in the
+    core and too wide in the tails is flagged here and can pass there.
+
+    Ties take the mid-rank, so a cell whose members all equal the target lands
+    at the centre of the histogram rather than at an edge.
+    """
+
+    def __init__(self):
+        self._sum_u: torch.Tensor | None = None
+        self._sum_u_squared: torch.Tensor | None = None
+        self._n_degenerate: torch.Tensor | None = None
+        self._n_samples = 0
+        self._n_ensemble: int | None = None
+
+    def record(self, target: torch.Tensor, gen: torch.Tensor):
+        n_ensemble = gen.shape[1]
+        if self._n_ensemble is None:
+            self._n_ensemble = n_ensemble
+        elif self._n_ensemble != n_ensemble:
+            raise ValueError(
+                "rank histogram needs a fixed ensemble size, got "
+                f"{n_ensemble} after {self._n_ensemble}."
+            )
+        below = (gen < target).sum(dim=1)
+        tied = (gen == target).sum(dim=1)
+        # Normalised mid-rank in (0, 1): under calibration its mean is 1/2.
+        u = (below + 0.5 * tied + 0.5) / (n_ensemble + 1)
+        highest = gen.amax(dim=1)
+        # A prescribed cell (every member equal to the target, e.g. SST over
+        # ocean) is a genuine 0/0 rather than a collapsed ensemble.
+        degenerate = (highest == gen.amin(dim=1)) & (highest == target.amax(dim=1))
+        if self._sum_u is None:
+            self._sum_u = torch.zeros_like(u[0, 0])
+            self._sum_u_squared = torch.zeros_like(u[0, 0])
+            self._n_degenerate = torch.zeros_like(u[0, 0])
+        self._sum_u += u.sum(dim=(0, 1))
+        self._sum_u_squared += (u * u).sum(dim=(0, 1))
+        self._n_degenerate += degenerate.sum(dim=(0, 1))
+        self._n_samples += u.shape[0] * u.shape[1]
+
+    def _moments(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self._sum_u is None or self._n_samples == 0:
+            raise ValueError("No batches have been recorded.")
+        assert self._sum_u_squared is not None and self._n_degenerate is not None
+        mean = self._sum_u / self._n_samples
+        variance = self._sum_u_squared / self._n_samples - mean * mean
+        always_degenerate = self._n_degenerate == self._n_samples
+        return mean, variance, always_degenerate
+
+
+class RankBiasMetric(_RankHistogramMetric):
+    """
+    Mean normalised rank minus 1/2: where the ensemble sits against the truth.
+
+    Positive means the target falls above the members more often than it
+    should, so the ensemble is biased low; negative is the reverse. It is the
+    sloped rank histogram, and it is a bias in the ensemble's location, which
+    no amount of rescaling the spread will fix.
+    """
+
+    def get(self) -> torch.Tensor:
+        mean, _, always_degenerate = self._moments()
+        return torch.where(always_degenerate, torch.zeros_like(mean), mean - 0.5)
+
+
+class RankDispersionMetric(_RankHistogramMetric):
+    """
+    Rank variance against its calibrated value, as a fraction: the U or the
+    dome in the rank histogram.
+
+    Positive means the target lands near the edges of the ensemble too often
+    -- the ensemble is under-dispersed, the failure a collapsing stochastic
+    model shows. Negative means it lands in the middle too often, so the
+    ensemble is over-dispersed.
+
+    The reference is the variance of a discrete uniform rank, ``(1 - (M+1)^-2)
+    / 12``, not the continuous 1/12. At the four members this campaign runs
+    those differ by 4%, which is the size of the effects being looked for.
+    """
+
+    def get(self) -> torch.Tensor:
+        _, variance, always_degenerate = self._moments()
+        assert self._n_ensemble is not None
+        reference = (1.0 - (self._n_ensemble + 1) ** -2.0) / 12.0
+        return torch.where(
+            always_degenerate,
+            torch.zeros_like(variance),
+            variance / reference - 1.0,
+        )
+
+
 class _EnsembleAggregator:
     """
     Aggregator for ensemble-based metrics.
@@ -213,7 +317,7 @@ class _EnsembleAggregator:
         self._dist = Distributed.get_instance()
         self._log_mean_maps = log_mean_maps
         self._metadata = metadata
-        self._diverging_metrics = {"ssr_bias"}
+        self._diverging_metrics = {"ssr_bias", "rank_bias", "rank_dispersion"}
         self._target = target
         self._channel_mean_names = channel_mean_names
         self._report_variables = (
@@ -230,6 +334,8 @@ class _EnsembleAggregator:
                 "crps": {},
                 "ssr_bias": {},
                 "ensemble_mean_rmse": {},
+                "rank_bias": {},
+                "rank_dispersion": {},
             }
             for key in gen_data:
                 self._variable_metrics["crps"][key] = CRPSMetric()
@@ -237,6 +343,8 @@ class _EnsembleAggregator:
                 self._variable_metrics["ensemble_mean_rmse"][key] = (
                     EnsembleMeanRMSEMetric()
                 )
+                self._variable_metrics["rank_bias"][key] = RankBiasMetric()
+                self._variable_metrics["rank_dispersion"][key] = RankDispersionMetric()
         return self._variable_metrics
 
     @torch.no_grad()
