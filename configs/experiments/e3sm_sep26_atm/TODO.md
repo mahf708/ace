@@ -183,7 +183,7 @@ belongs in the training loop as a scalar.
 Both inline rollout blocks run one member per initial condition, so nothing in
 training measures calibration, spread, or any proper finite-ensemble score.
 That was the launch gate. `make_eval_config.py`, `sbatch-scripts/run-eval.sh`
-and `sbatch-scripts/submit-eval.sh` now exist, with 14 tests in
+and `sbatch-scripts/submit-eval.sh` now exist, with 17 tests in
 `test_campaign.py`.
 
 * **Two passes.** `scores` = members per IC, no trajectory files, `ensembles`
@@ -207,16 +207,39 @@ and `sbatch-scripts/submit-eval.sh` now exist, with 14 tests in
   I/O wait past 17 minutes, while the narrowed one (120 files) opened in ~5 and
   was at window 5 of 73 by then.
 * **8 ICs, not 16**, until the DVS stall is understood; the default says why.
+* **The data is staged off DVS.** `sbatch-scripts/stage-data.sh` copies the
+  decade to Lustre in 77 s at 3.3 GB/s, and `--data-root` points a config at
+  it. MEASURED 2026-09-05, the same two concurrent 8-IC evaluations either
+  way: 84 s per window against CFS, ranks parked in
+  `dvsipc_wait_for_response` while the GPUs that had data sat at 100%, and
+  13.5 s per window staged. A single run against CFS managed ~25 s, so the
+  filesystem was the bottleneck and concurrency made it worse; staged, two at
+  once each beat one run on CFS by a factor of two.
+* **The scores pass stops at its last scored lead.** It shared a five-year
+  default with the trajectory pass, so four fifths of it produced no ensemble
+  metric — only a better-sampled climatology, which is pass 2's job.
+* **`analysis/eval_table.py`** reads the output. `--seeds` gives the
+  seed-to-seed floor, `--ladder` puts each noise override in units of it.
 
-Left: cost the two passes properly (pass 1 was estimated at ~100 node-h for
-sixteen arms; the first timed run will replace that), and cap pass 2's output
-(~0.5 TB at three fields).
+**COSTED, 2026-09-05.** Scores pass, 8 ICs x 4 members x 1 year on 2 nodes,
+staged: ~19 min wall, ~0.63 node-hours. Sixteen arms x 3 seeds is ~30 node-h,
+not the ~100 estimated. Pass 2 output is still uncapped (~0.5 TB at three
+fields over five years).
 
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until
-effective sample size is estimated), relative economic value, calibration (rank
-histograms, reliability, coverage — nothing in `fme` computes these), MJO.
+effective sample size is estimated), relative economic value, MJO.
 Spread–skill and spectral tails need no new code.
+
+Calibration is **DONE**: `rank_bias` and `rank_dispersion` are the rank
+histogram's first two moments, computed per grid cell alongside `crps` and
+`ssr_bias` in `fme/ace/aggregator/one_step/ensemble.py`. They are what `ssr_bias`
+cannot see — an ensemble of the wrong shape at the right width passes a
+spread-skill test and fails a rank test, and shape is what these arms differ in.
+The reference variance is the discrete uniform's, `(1 - (M+1)^-2)/12`, which at
+four members is 4% from the continuous 1/12 and so is not a rounding detail.
+Still absent: reliability diagrams and coverage, which need the full histogram
+rather than its moments.
 
 ### D3. Tier 0 reads outstanding
 Done: epoch stability, degenerate-CRPS identity. Left:

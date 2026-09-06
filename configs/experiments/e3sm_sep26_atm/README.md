@@ -142,15 +142,28 @@ score a single realisation and nothing else. Calibration, spread and every
 finite-ensemble score come from the offline passes.
 
 ```bash
+sbatch-scripts/stage-data.sh                       # once per campaign; see below
+export EVAL_DATA_ROOT=$PSCRATCH/sep26-data
 ./make_eval_config.py RF01.S01 --pass scores       # 4 members/IC, no files
 ./make_eval_config.py RF01.S01 --pass traj         # 1 member, files written
 sbatch-scripts/submit-eval.sh --all --pass scores --dry-run
 sbatch-scripts/submit-eval.sh RF01.S01 --noise-ladder
+analysis/eval_table.py $EVAL_ROOT --seeds          # the noise floor
+analysis/eval_table.py $EVAL_ROOT --ladder         # overrides against it
 ```
+
+**Stage the data first.** The training template reads CFS, which compute nodes
+see through DVS, and the evaluator's access pattern is the one DVS handles
+worst. Two concurrent 8-IC evaluations ran at 84 s per window against CFS with
+ranks parked in `dvsipc_wait_for_response`, and at **13.5 s per window** against
+a staged copy on Lustre. The copy is 300 GB and takes 77 s; it repays itself
+before the first run finishes. `--data-root` refuses a staged root that is
+missing years the rollout reaches, since a short glob gives a short dataset
+rather than an error.
 
 | pass | shape | what it is for |
 |---|---|---|
-| `scores` | members per IC, no trajectory files | CRPS, spread–skill ratio, ensemble-mean RMSE at 6 h / 1 d / 5 d / 30 d / 90 d / 1 y |
+| `scores` | members per IC, no trajectory files | CRPS, spread–skill ratio, ensemble-mean RMSE and rank-histogram calibration at 6 h / 1 d / 5 d / 30 d / 90 d / 1 y |
 | `traj` | one member per IC, three fields written | per-trajectory variance, persistence, quantiles, wet-day frequency and intensity |
 
 The two passes are not interchangeable and the generator says so: asking for an
@@ -166,8 +179,20 @@ mechanism probe available; what they showed on RF01 is in
 control** — it is 14–16% worse than the model's own conditional mean at one
 step. The deterministic control is RF02.
 
+The scores pass stops at its last scored lead — one year — because rolling on
+buys no ensemble metric, only a better-sampled climatology, which is what the
+trajectory pass is for. `--years` overrides either.
+
+`ssr_bias` says whether the spread is the right *size*; `rank_bias` and
+`rank_dispersion` say whether the ensemble is the right *shape*. An ensemble too
+narrow in the core and too wide in the tails passes the first and fails the
+second, and since the arms here differ in exactly how their loss shapes a
+distribution, that is the distinction the campaign is built to see.
+
 Output lands in `$EVAL_ROOT/<exp>.S<seed>.eval-<pass>[-<noise>]`, default
-`$PSCRATCH/sep26-eval`.
+`$PSCRATCH/sep26-eval`. `analysis/eval_table.py` reads it. Start with `--seeds`:
+the seed-to-seed spread of one arm is the floor every comparison is measured
+against, and a difference smaller than it is not a result.
 
 ---
 
@@ -221,7 +246,7 @@ run trained before it.
 uv run --extra dev python -m pytest configs/experiments/e3sm_sep26_atm/test_campaign.py
 ```
 
-91 tests: the generator and checker, the ported loss fixes, and the offline
+94 tests: the generator and checker, the ported loss fixes, and the offline
 evaluation generator. Half are mutation tests: each breaks one thing in a
 generated config and asserts the checker notices. `check_campaign.py` duplicates the generator's
 tables on purpose — a checker that imports them can only prove the generator is
@@ -245,6 +270,9 @@ template was copied from it and five arms difference against those three seeds.
 * **The data loader is bimodal.** Step timing must be a median over windows.
 * **A config that parses is not a config that runs.** Smoke-test any new axis
   with a real forward *and backward* pass.
+* **Evaluations read CFS through DVS and it is the bottleneck**, not the GPUs.
+  A rank in uninterruptible `D` while other GPUs sit at 100% is this, not an
+  arm that needs more memory. Stage to Lustre first.
 
 ## Files
 
@@ -255,6 +283,8 @@ template was copied from it and five arms difference against those three seeds.
 | `AGENTS.md` | history |
 | `make_campaign.py` | run list, axis tables, guards, generator |
 | `make_eval_config.py` | offline evaluation configs, both passes |
+| `sbatch-scripts/stage-data.sh` | copy the dataset off DVS before evaluating |
+| `analysis/eval_table.py` | read the scores pass: seed floor, noise ladder |
 | `check_campaign.py` | asserts each config agrees with its run id |
 | `test_campaign.py` | unit + mutation tests |
 | `analysis/` | Tier 0 reads, card sweep, upstream-fix verification |
