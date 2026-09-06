@@ -1,3 +1,4 @@
+import math
 import unittest.mock
 from typing import Literal
 
@@ -22,9 +23,23 @@ def test_isotropic_noise(nlat: int, nlon: int):
     noise = isotropic_noise(leading_shape, lmax, mmax, isht, device=get_device())
     assert noise.shape == (n_batch, embed_dim, nlat, nlon)
     assert noise.dtype == torch.float32
-    torch.testing.assert_close(
-        noise.mean(), torch.tensor(0.0, device=noise.device), atol=2e-3, rtol=0.0
+    # The grid mean of an isotropic field is carried by its lowest-order modes,
+    # so its sampling error scales with the truncation rather than with the
+    # number of grid points: MEASURED at 2.2e-3 for lmax 8 and 3.5e-4 for
+    # lmax 64, a factor of six between the two cases this test parametrizes. A
+    # single absolute tolerance is therefore about six standard errors at high
+    # resolution and under one at low, where it rejects ordinary draws -- the
+    # 8x16 case failed on an unmodified tree at 1.2 standard errors. Compare
+    # against the field's own standard error, which is the same test at both
+    # resolutions and still catches a generator with a real offset.
+    per_sample_mean = noise.mean(dim=(-2, -1))
+    standard_error = per_sample_mean.std() / math.sqrt(per_sample_mean.numel())
+    assert noise.mean().abs() < 4 * standard_error, (
+        f"mean {noise.mean():.2e} is more than four standard errors "
+        f"({standard_error:.2e}) from zero"
     )
+    # the variance is pooled over every mode and grid point, so it is far
+    # better determined and a fixed tolerance is fine
     torch.testing.assert_close(
         noise.std(), torch.tensor(1.0, device=noise.device), atol=5e-3, rtol=0.0
     )
