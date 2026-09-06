@@ -56,6 +56,7 @@ import copy
 import datetime
 import glob
 import os
+import subprocess
 import pathlib
 import sys
 
@@ -107,6 +108,25 @@ TRAJ_YEARS = 5
 # it wants the samples.  A stalled job still holds its allocation silently, so
 # `run-eval.sh` keeps its deadline.
 DEFAULT_ICS = 16
+
+# Arms are scored at a FIXED EPOCH with averaged weights, not at whatever
+# `best_ckpt.tar` happens to hold.
+#
+# Two measurements force this.  `best_ckpt.tar` is rewritten whenever
+# validation loss improves, so its epoch differs from arm to arm; scoring three
+# seeds of one arm that way gives a 33% spread in 90-day temperature error
+# against 14.5% at a common epoch, so half the campaign's resolving power goes
+# to an accident of when each run last improved.  And the epoch is not a
+# neutral choice: swept from 10 to 23 on one seed, one-day error improves
+# 10-27% while one-year error degrades 6-96%, on every variable, pivoting at
+# 30 days -- so validation loss, which tracks the improving end, selects close
+# to the worst checkpoint available for the climate range.
+#
+# `--epoch N` therefore folds the running average of `ckpt_NNNN.tar` into the
+# weights the evaluator loads, caching the result, and scores that.  Leaving it
+# unset keeps `best_ckpt.tar`, which is right for a one-off look at an arm and
+# wrong for any comparison between arms.
+SCORING_EPOCH_ENV = "SEP26_SCORING_EPOCH"
 
 # Where the evaluator reads its data.  The training template points at the
 # project tree on CFS, which the compute nodes see through DVS -- and the
@@ -227,6 +247,41 @@ def resolve_run(runid: str) -> tuple[mc.Run | None, str, str]:
             return run, run.runid, os.path.join(root, run.runid)
     known = sorted(e.exp for e in mc.RUNLIST)
     raise EvalError(f"unknown run id {runid!r}; experiments are {known} (or RF01.S01)")
+
+
+def fixed_epoch_checkpoint(checkpoint_dir: str, runid: str, epoch: int) -> str:
+    """Averaged weights at `epoch`, built once and cached.
+
+    `ckpt_NNNN.tar` keeps raw weights in the slot the evaluator reads and the
+    running average beside them, while `best_ckpt.tar` has folded the average
+    in.  Scoring the raw ones is not a smaller version of the same comparison:
+    on RF01.S01 at epoch 22 the two differ by more than the entire epoch effect
+    (1.750 K averaged against 4.130 K raw, 90-day ensemble-mean RMSE).  So the
+    fold is not optional, and `analysis/ema_checkpoint.py` is what does it.
+    """
+    pscratch = os.environ.get("PSCRATCH", "/pscratch/sd/m/mahf708")
+    pin_root = os.environ.get("SEP26_PIN_ROOT", f"{pscratch}/sep26-pin")
+    pinned = os.path.join(pin_root, f"{runid}.ema{epoch}")
+    target = os.path.join(pinned, "training_checkpoints", "best_ckpt.tar")
+    if os.path.exists(target):
+        return pinned
+    source = os.path.join(
+        checkpoint_dir, "training_checkpoints", f"ckpt_{epoch:04d}.tar"
+    )
+    if not os.path.exists(source):
+        raise EvalError(
+            f"no checkpoint for epoch {epoch} at {source}. Available epochs "
+            "are the ckpt_NNNN.tar files in that directory; an arm that has "
+            "not reached the scoring epoch cannot be scored at it."
+        )
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    fold = os.path.join(os.path.dirname(__file__), "analysis", "ema_checkpoint.py")
+    result = subprocess.run(
+        [sys.executable, fold, source, target], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise EvalError(f"could not fold {source}: {result.stderr.strip()}")
+    return pinned
 
 
 def check_divisible(n_ics: int, nodes: int) -> int:
@@ -464,6 +519,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--checkpoint", default=None, help="override the weights path")
     parser.add_argument(
+        "--epoch",
+        type=int,
+        default=None,
+        help="score at this epoch with averaged weights, building the folded "
+        f"checkpoint if needed (default ${SCORING_EPOCH_ENV}). Required for any "
+        "comparison between arms: best_ckpt.tar's epoch differs per arm and "
+        "doubles the seed floor",
+    )
+    parser.add_argument(
         "--data-root",
         default=None,
         help="read the dataset from here instead of the template's path "
@@ -505,6 +569,9 @@ def main(argv: list[str] | None = None) -> int:
     pscratch = os.environ.get("PSCRATCH", "/pscratch/sd/m/mahf708")
     out_root = args.out or os.environ.get("EVAL_ROOT", f"{pscratch}/sep26-eval")
     data_root = args.data_root or os.environ.get(STAGED_DATA_ROOT_ENV) or None
+    epoch = args.epoch
+    if epoch is None and os.environ.get(SCORING_EPOCH_ENV):
+        epoch = int(os.environ[SCORING_EPOCH_ENV])
 
     if args.all:
         targets = [r.runid for r in mc.expand(mc.RUNLIST)]
@@ -513,6 +580,8 @@ def main(argv: list[str] | None = None) -> int:
 
     for target in targets:
         run, runid, ckpt_dir = resolve_run(target)
+        if epoch is not None and args.checkpoint is None:
+            ckpt_dir = fixed_epoch_checkpoint(ckpt_dir, runid, epoch)
         word = run.word if run is not None else None
         if run is None:
             label = f"RF01.{runid.split('.')[-1]}"

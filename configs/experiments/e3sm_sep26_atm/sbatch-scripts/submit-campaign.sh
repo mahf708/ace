@@ -6,6 +6,13 @@
 #     ./submit-campaign.sh                        # queue P1..P3
 #     ./submit-campaign.sh --max-priority 5       # ...including the tail
 #     ./submit-campaign.sh --only LG01            # one experiment, by id
+#     ./submit-campaign.sh --only RF02 --reservation _CAP_aigs_hist
+#
+# --reservation also switches the partition, the QOS and the node constraint,
+# because a reservation's nodes are hbm80g while the batch script asks for
+# hbm40g. Setting only the reservation leaves the job pending on
+# `BadConstraints` indefinitely rather than failing, which is how an RF02 seed
+# spent its first minutes in the reservation doing nothing.
 #
 # Priorities are 1..5 and the default cap is 3. P1 is the deterministic
 # reference, which five arms difference against and which therefore has to
@@ -44,8 +51,9 @@ while [ $# -gt 0 ]; do
         --dry-run)      DRY=1; shift ;;
         --preflight)    PRE=1; shift ;;
         --only)         ONLY="${2:?--only needs an experiment id or run id}"; shift 2 ;;
+        --reservation)  export FME_RESERVATION="${2:?--reservation needs a name}"; shift 2 ;;
         --max-priority) MAXP="${2:?--max-priority needs a number}"; shift 2 ;;
-        *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N]" >&2
+        *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N] [--reservation NAME]" >&2
            echo "       N is 1..3 for the arms that carry the claims, 4..5 for the tail" >&2
            exit 2 ;;
     esac

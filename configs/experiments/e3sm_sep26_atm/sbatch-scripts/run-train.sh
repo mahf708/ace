@@ -296,6 +296,18 @@ fi
 EXTRA=()
 [ -n "${FME_QOS:-}" ]  && { EXTRA+=(--qos="$FME_QOS");   echo "qos: $FME_QOS" >&2; }
 [ -n "${FME_TIME:-}" ] && { EXTRA+=(--time="$FME_TIME"); echo "walltime: $FME_TIME" >&2; }
+# A reservation is not just a flag: its nodes are hbm80g, while the batch
+# script asks for hbm40g because that pool is 5.5x larger and only 9.4%
+# slower. Those two cannot both be satisfied, and slurm says so with
+# `BadConstraints` on a job that then sits pending forever rather than
+# failing. So sending a run to a reservation has to override the partition,
+# the QOS and the constraint together, which is why this is one option and
+# not three.
+if [ -n "${FME_RESERVATION:-}" ]; then
+    EXTRA+=(--reservation="$FME_RESERVATION" --qos=resv --partition=resv
+            --constraint='gpu&a100&hbm80g')
+    echo "reservation: $FME_RESERVATION (resv partition/qos, hbm80g)" >&2
+fi
 
 echo "staged config: $CONFIG_DIR/$CONFIG_NAME" >&2
 [ -n "$RUNID" ] && echo "runid: $RUNID -> ${CAMPAIGN_ROOT}/${RUNID}" >&2
