@@ -183,8 +183,10 @@ The scores pass stops at its last scored lead — one year — because rolling o
 buys no ensemble metric, only a better-sampled climatology, which is what the
 trajectory pass is for. `--years` overrides either.
 
-`ssr_bias` says whether the spread is the right *size*; `rank_bias` and
-`rank_dispersion` say whether the ensemble is the right *shape*. An ensemble too
+`ssr_bias` says whether the spread is the right *size*; `rank_bias`,
+`rank_dispersion` and `rank_outlier_rate` say whether the ensemble is the right
+*shape* — its slope, its width, and how often the truth fell outside it
+altogether. An ensemble too
 narrow in the core and too wide in the tails passes the first and fails the
 second, and since the arms here differ in exactly how their loss shapes a
 distribution, that is the distinction the campaign is built to see.
@@ -255,7 +257,7 @@ run trained before it.
 uv run --extra dev python -m pytest configs/experiments/e3sm_sep26_atm/test_campaign.py
 ```
 
-94 tests: the generator and checker, the ported loss fixes, and the offline
+98 tests: the generator and checker, the ported loss fixes, and the offline
 evaluation generator. Half are mutation tests: each breaks one thing in a
 generated config and asserts the checker notices. `check_campaign.py` duplicates the generator's
 tables on purpose — a checker that imports them can only prove the generator is
@@ -295,6 +297,9 @@ template was copied from it and five arms difference against those three seeds.
 | `make_eval_config.py` | offline evaluation configs, both passes |
 | `sbatch-scripts/stage-data.sh` | copy the dataset off DVS before evaluating |
 | `analysis/eval_table.py` | read the scores pass: seed floor, noise ladder |
+| `analysis/checkpoint_epoch.py` | which epoch a checkpoint is, and whether its weights are averaged or raw |
+| `analysis/ema_checkpoint.py` | averaged weights at any epoch, so arms can be scored at a fixed one |
+| `analysis/rf01_scores/` | the first scoring of RF01: the seed floor and what it permits |
 | `check_campaign.py` | asserts each config agrees with its run id |
 | `test_campaign.py` | unit + mutation tests |
 | `analysis/` | Tier 0 reads, card sweep, upstream-fix verification |

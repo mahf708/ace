@@ -172,8 +172,15 @@ Two working rules regardless:
 
 ## 4. The calibration metrics, checked against the old ones
 
-`rank_bias` and `rank_dispersion` were added for this campaign. Two independent
-checks that they measure what they claim:
+`rank_bias`, `rank_dispersion` and `rank_outlier_rate` were added for this
+campaign -- the rank histogram's slope, its width, and the weight in its two end
+bins. The third is what an extremes claim needs: it counts how often the truth
+fell outside the ensemble at all, against the `2/(M+1)` a calibrated one would
+miss. It is not the more precise of the three -- over repeated eight-sample
+draws at four members its spread across trials is 0.105 against the variance's
+0.070 -- only the more directly interpretable.
+
+Two independent checks that they measure what they claim:
 
 * **Where the ensemble is unbiased they agree with spread-skill.** At 1 d and
   5 d, `|rank_bias| < 0.01` and both statistics say mildly under-dispersed:

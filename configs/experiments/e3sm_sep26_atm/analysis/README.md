@@ -113,16 +113,17 @@ deterministic control is RF02.
 
 ## `rf01_scores/`
 
-The first offline scoring of RF01, 2026-09-05, from one four-node allocation:
-fourteen scores-pass runs across the noise ladder, three seeds, and three seeds
-pinned to a common epoch.
+The first offline scoring of RF01, 2026-09-05, from two four-node allocations:
+the noise ladder at five amplitudes and modes, three seeds, and the same seeds
+re-scored at a matched epoch with matched weight kind.
 
 | | |
 |---|---|
-| `FINDINGS.md` | the seed floor, the noise ladder, and why epoch was not the story |
+| `FINDINGS.md` | the seed floor, the noise ladder, and the two checkpoint kinds |
 
-The one number to carry away: **at 90 days the seed-to-seed spread in
-ensemble-mean RMSE is 29% for 2 m temperature and 34% for surface temperature,
-epoch-matched, at three seeds** -- so a climate-range temperature comparison
-between arms needs an effect of about a third to be readable. Precipitation,
-outgoing longwave and the winds stay inside 8% and can be read.
+The one number to carry away: **with averaged weights at a fixed epoch, the
+seed-to-seed spread in ensemble-mean RMSE is 14.5% for 2 m temperature at 90
+days and under 7% at every lead out to 30 days.** Climate-range comparisons are
+workable. Scoring at `best_ckpt.tar` instead doubles that to 33%, because its
+epoch is whatever last improved validation loss and so differs per arm -- use
+`ema_checkpoint.py` to fix the epoch and keep the averaged weights.
