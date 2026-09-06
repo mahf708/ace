@@ -222,8 +222,15 @@ and `sbatch-scripts/submit-eval.sh` now exist, with 17 tests in
 * **Training is on Lustre too, and it is worth more than the eval staging was.**
   MEASURED 2026-09-06 on RF02 -- three 4-node seeds of one arm, same code, same
   reservation, same period, differing only in filesystem. The `Step N:` interval
-  is bimodal: median 69-71 s either way (compute-bound), with 8-29 minute stalls
-  on CFS at **one per 24.5 min**, 22 of them over 539 min of node time. Lost
+  is bimodal, and the compute floor is identical either way -- min 66-68 s per
+  100 batches on both, across a node change, so the difference is I/O and not
+  the GPUs. Lustre costs 4-7% in the typical step (p10 67-68 -> 70-72, median
+  69 -> 72-74) and pays for it at the tail: p90 319-439 s on CFS against
+  77-82 s. About 1 s of that shift is the three seeds sharing one copy --
+  S03 alone read 71 s median / 77 s p90, and 72 / 81 once S01 and S02 joined.
+  Striping is not the lever: the 600 training files already spread over 365
+  OSTs, at most 8 files each. CFS ran 8-29 minute stalls
+  at **one per 24.5 min**, 22 of them over 539 min of node time. Lost
   wall clock 39-54%; effective throughput 1900-2100 batches/h against ~4970 on
   scratch. At 8217 batches/epoch, 30 epochs is 111-124 h on CFS and 48 h on
   scratch -- the difference between fitting the `_CAP_aigs_hist` window and not.
@@ -232,7 +239,9 @@ and `sbatch-scripts/submit-eval.sh` now exist, with 17 tests in
   set is identical (1501 files, 1940-2065, matching sizes). CONFIRMED over the
   next 3.2 h: 448 intervals across the three seeds, **zero stalls**, max 85-90 s
   against a 72-74 s median -- a 1.2x tail where CFS ran to 25x. The prediction
-  was falsifiable and held, so the filesystem is the whole of it.
+  was falsifiable and held. Measured against each filesystem's own median-implied
+  ceiling, CFS captured 39-44% of it and Lustre captures 94-97% -- we give up 4%
+  of the best case to stop losing 60% of it.
 * **The read tail is the mechanism, not the read cost.** Replaying the loader's
   own pattern (55 variables x 12 consecutive timesteps) on idle nodes at 1, 16
   and 64 concurrent readers: CFS median 4.6 s, p99 46 s, **max 530 s**; scratch
