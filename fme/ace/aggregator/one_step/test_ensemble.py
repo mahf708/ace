@@ -626,9 +626,7 @@ def test_rank_dispersion_pools_across_data_parallel_ranks():
     # rank r takes the (r mod n_sample+1)-th position: below all members,
     # between each pair, or above all
     position = 0.5 + (rank % (n_sample + 1))
-    target = torch.full(
-        (1, 1, 1, n_y, n_x), float(position), device=get_device()
-    )
+    target = torch.full((1, 1, 1, n_y, n_x), float(position), device=get_device())
     metric = RankDispersionMetric()
     metric.record(target=target, gen=members.expand(1, n_sample, 1, n_y, n_x))
     got = metric.get()
