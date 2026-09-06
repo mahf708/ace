@@ -226,6 +226,33 @@ staged: ~19 min wall, ~0.63 node-hours. Sixteen arms x 3 seeds is ~30 node-h,
 not the ~100 estimated. Pass 2 output is still uncapped (~0.5 TB at three
 fields over five years).
 
+### D1b. The seed floor constrains what the campaign can conclude -- MEASURED
+2026-09-05, three RF01 seeds pinned to epoch 22, 8 ICs x 4 members x 1 year.
+Coefficient of variation of ensemble-mean RMSE across the three seeds:
+
+| | 1 d | 5 d | 30 d | 90 d | 1 y |
+|---|---|---|---|---|---|
+| Tat2m | 4.0% | 8.3% | 6.3% | **28.6%** | **23.2%** |
+| TS | 3.2% | 7.2% | 8.0% | **34.3%** | **26.8%** |
+| Qat2m | 3.6% | 7.7% | 7.2% | **23.4%** | **21.0%** |
+| PS | 14.8% | 19.0% | 7.6% | 17.8% | 12.9% |
+| FLUT | 2.0% | 3.6% | 3.8% | 7.1% | 8.4% |
+| U_6 | 4.3% | 7.6% | 2.7% | 6.2% | 6.8% |
+| precipitation | 1.7% | 4.4% | 3.6% | 1.2% | 1.8% |
+
+An arm difference smaller than the entry is not a result at three seeds. The
+weather range is workable everywhere. At climate leads the thermodynamic fields
+are not: a 90-day temperature comparison needs an effect of about a third, and
+no arm in the run list is expected to move it that far. Precipitation, outgoing
+longwave and the winds hold to 8% and can be read at 90 d and 1 y.
+
+Open question this raises: **is three seeds enough for the climate-range claims
+the campaign wants to make on temperature?** Either the claims move to 90 d on
+the fields that hold, or the seed count goes up on the arms that need it, or
+the climate-range temperature reads are dropped. Decide before P2 is queued --
+it is a scoping decision, not an analysis one. See
+`analysis/rf01_scores/FINDINGS.md`.
+
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until
 effective sample size is estimated), relative economic value, MJO.
