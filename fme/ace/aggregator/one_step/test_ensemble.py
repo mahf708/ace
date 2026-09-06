@@ -447,20 +447,52 @@ def test_rank_metrics_near_zero_on_a_calibrated_ensemble(n_sample):
     assert dispersion.abs().mean() < 0.2
 
 
+def test_rank_dispersion_is_not_pinned_by_one_sample_per_rank():
+    """The scores pass gives each rank one initial condition at one lead, so a
+    variance formed per rank is a variance over a single sample: identically
+    zero, pinning the statistic at its -1 floor. The moments are pooled before
+    the variance is formed, so a calibrated ensemble spread over eight such
+    single-sample records still reads near zero."""
+    torch.manual_seed(0)
+    metric = RankDispersionMetric()
+    for _ in range(8):
+        both = torch.randn(1, 5, 1, 8, 8)
+        metric.record(target=both[:, :1], gen=both[:, 1:])
+    got = metric.get()
+    assert torch.isfinite(got).all()
+    assert got.mean().abs() < 0.3, got.mean()
+
+
+def test_rank_dispersion_is_undefined_below_two_samples():
+    """One sample carries no variance at all, and reporting the floor there
+    would read as a fully collapsed ensemble."""
+    metric = RankDispersionMetric()
+    both = torch.randn(1, 5, 1, 2, 2)
+    metric.record(target=both[:, :1], gen=both[:, 1:])
+    assert torch.isnan(metric.get()).all()
+
+
 @pytest.mark.parametrize("n_sample", [2, 4, 10])
 def test_rank_dispersion_reference_is_the_discrete_uniform(n_sample):
-    """The calibrated rank variance is (1 - (M+1)^-2)/12, not 1/12. Feeding
-    exactly uniform ranks must give exactly zero, which the continuous
-    reference would not: at four members it is off by 4%."""
+    """The calibrated rank variance is the discrete uniform's,
+    (1 - (M+1)^-2)/12, not the continuous 1/12; at four members they differ by
+    4%, which is the size of the effects being looked for.
+
+    Pinned on an exactly flat histogram of M+1 samples, one per rank. Its
+    *population* variance is the reference exactly, so the unbiased estimator
+    -- which targets the population value from a finite draw -- returns the
+    reference times (M+1)/M, and the statistic is 1/M. Getting the reference
+    wrong moves that: at M=4 the continuous 1/12 would give 0.200, not 0.250.
+    """
     metric = RankDispersionMetric()
-    # one sample per rank, so the histogram is exactly flat
     n_y, n_x = 2, 2
     members = torch.arange(1.0, n_sample + 1).reshape(1, n_sample, 1, 1, 1)
     gen = members.expand(n_sample + 1, n_sample, 1, n_y, n_x).contiguous()
     # target below all members, between each pair, then above all
     targets = torch.arange(0.5, n_sample + 1).reshape(n_sample + 1, 1, 1, 1, 1)
     metric.record(target=targets.expand(-1, 1, 1, n_y, n_x), gen=gen)
-    assert torch.allclose(metric.get(), torch.zeros(n_y, n_x), atol=1e-6)
+    expected = torch.full((n_y, n_x), 1.0 / n_sample)
+    assert torch.allclose(metric.get(), expected, atol=1e-6), metric.get()
 
 
 def test_rank_dispersion_positive_when_underdispersed():

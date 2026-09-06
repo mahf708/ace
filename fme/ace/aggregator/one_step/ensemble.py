@@ -233,13 +233,40 @@ class _RankHistogramMetric(ReducedMetric):
         self._n_samples += u.shape[0] * u.shape[1]
 
     def _moments(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Pooled mean and unbiased variance of the normalised rank.
+
+        The reduction happens here rather than in the caller because the
+        variance has to be formed *after* pooling. This aggregator scores one
+        lead time, and the divisibility guard gives each rank an equal share of
+        the initial conditions -- often exactly one. A variance taken per rank
+        is then a variance over a single sample: identically zero, so the
+        statistic pins at its -1 floor and says nothing. Pooling the two
+        moments first and forming the variance from them is the whole point.
+
+        ``reduce_mean`` is an all-reduce, so every rank ends with the same
+        value and the caller's own reduction is idempotent. Equal counts per
+        rank are what make a mean of per-rank means the pooled mean, and
+        ``InferenceEvaluatorConfig`` refuses a shape that would break that.
+        """
         if self._sum_u is None or self._n_samples == 0:
             raise ValueError("No batches have been recorded.")
         assert self._sum_u_squared is not None and self._n_degenerate is not None
-        mean = self._sum_u / self._n_samples
-        variance = self._sum_u_squared / self._n_samples - mean * mean
-        always_degenerate = self._n_degenerate == self._n_samples
-        return mean, variance, always_degenerate
+        dist = Distributed.get_instance()
+        n_local = self._n_samples
+        mean = dist.reduce_mean(self._sum_u / n_local)
+        second = dist.reduce_mean(self._sum_u_squared / n_local)
+        degenerate_fraction = dist.reduce_mean(self._n_degenerate / n_local)
+        n_total = n_local * dist.total_data_parallel_ranks
+        if n_total < 2:
+            # No spread to estimate from; say so rather than report the floor.
+            variance = torch.full_like(mean, float("nan"))
+        else:
+            # Unbiased: with eight initial conditions the n/(n-1) factor is
+            # 14%, far larger than the departures from calibration being
+            # looked for, so the biased estimator would read as
+            # under-dispersion everywhere.
+            variance = (second - mean * mean) * (n_total / (n_total - 1))
+        return mean, variance, degenerate_fraction == 1.0
 
 
 class RankBiasMetric(_RankHistogramMetric):
