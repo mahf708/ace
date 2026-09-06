@@ -771,3 +771,16 @@ def test_eval_env_records_which_weights_were_read(tmp_path):
     assert ev.checkpoint_provenance(str(tmp_path / "nope")) == [
         "# checkpoint not present at generation time"
     ]
+
+
+def test_noise_ladder_brackets_the_trained_amplitude():
+    """A ladder with only a downward rung can conclude "not smaller" and
+    nothing else. RF01 is mildly under-dispersed at its trained amplitude, so
+    the interesting direction is upward and the rungs must bracket 1.0."""
+    import make_eval_config as ev
+
+    scales = sorted(
+        mode["scale"] for mode in ev.NOISE_MODES.values() if mode is not None
+    )
+    assert min(scales) < 1.0 < max(scales)
+    assert _eval(noise="double")["stepper_override"]["noise"]["scale"] == 2.0

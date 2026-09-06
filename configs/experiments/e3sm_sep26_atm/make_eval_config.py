@@ -117,11 +117,19 @@ STALLING_ICS = 16
 # EVAL_DATA_ROOT, or pass --data-root, to use one.
 STAGED_DATA_ROOT_ENV = "EVAL_DATA_ROOT"
 
+# The amplitude rungs bracket the trained value rather than landing on it.
+# MEASURED on RF01.S01 at one day: the trained amplitude is 7-9%
+# under-dispersed by both spread-skill and rank, so the calibrated scale is
+# near 1.1 if spread grows linearly with it. `half` overshoots downward hard
+# (ssr_bias -0.09 -> -0.37, CRPS +31%), which is the point: it says the
+# ensemble is not too wide. `double` is the other bracket, and without it the
+# ladder could only ever conclude "not smaller".
 NOISE_MODES = {
     "keep": None,
     "off": {"scale": 0.0, "mode": "fresh"},
     "fresh": {"scale": 1.0, "mode": "fresh"},
     "half": {"scale": 0.5, "mode": "fresh"},
+    "double": {"scale": 2.0, "mode": "fresh"},
     "fixed": {"scale": 1.0, "mode": "fixed"},
     "mean": {"scale": 1.0, "mode": "mean", "draws": 8},
 }

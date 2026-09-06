@@ -69,7 +69,7 @@ fi
 # and together they say what the noise pathway is doing to the trajectory.
 MODES=(keep)
 if [ "$LADDER" -eq 1 ]; then
-    MODES+=(off mean fixed half)
+    MODES+=(off mean fixed half double)
 fi
 
 SELECT=("${ARMS[@]}")
