@@ -53,6 +53,7 @@ Usage:
 
 import argparse
 import copy
+import glob
 import os
 import pathlib
 import sys
@@ -101,6 +102,19 @@ TRAJ_YEARS = 5
 # always sets a deadline.
 DEFAULT_ICS = 8
 STALLING_ICS = 16
+
+# Where the evaluator reads its data.  The training template points at the
+# project tree on CFS, which the compute nodes see through DVS -- and the
+# evaluator's read pattern (a window of every variable, every 20 steps, per
+# initial condition) is the one DVS is worst at.  MEASURED on 2026-09-05, the
+# same two concurrent 8-IC evaluations either way: 84 s per window against CFS,
+# with ranks parked in `dvsipc_wait_for_response` while the GPUs that had data
+# sat at 100%, and 13.5 s per window against a staged copy on Lustre.  A single
+# run against CFS managed ~25 s, so the filesystem was the bottleneck and
+# concurrency made it worse.  Copying the decade costs 77 s at 3.3 GB/s
+# (sbatch-scripts/stage-data.sh), repaying itself inside the first run.  Set
+# EVAL_DATA_ROOT, or pass --data-root, to use one.
+STAGED_DATA_ROOT_ENV = "EVAL_DATA_ROOT"
 
 NOISE_MODES = {
     "keep": None,
@@ -251,6 +265,7 @@ def build(
     seed: int,
     out_dir: str,
     wandb: bool = True,
+    data_root: str | None = None,
 ) -> dict:
     template = _template()
     block = _test_block(template)
@@ -268,6 +283,22 @@ def build(
         dataset["file_pattern"] = narrow_file_pattern(
             dataset["file_pattern"], ics, years
         )
+    if data_root is not None:
+        if not isinstance(dataset, dict):
+            raise EvalError("the template's dataset is not a single path to move")
+        # A staged copy that is missing the years this rollout reaches gives an
+        # empty or short dataset rather than an error, so check it here.
+        staged = glob.glob(os.path.join(data_root, dataset["file_pattern"]))
+        original = glob.glob(
+            os.path.join(dataset["data_path"], dataset["file_pattern"])
+        )
+        if len(staged) < len(original):
+            raise EvalError(
+                f"{data_root} holds {len(staged)} of the {len(original)} files "
+                f"matching {dataset['file_pattern']}; stage the rest with "
+                "sbatch-scripts/stage-data.sh before using --data-root"
+            )
+        dataset["data_path"] = data_root
 
     aggregator: dict = {
         "histogram": {"enabled": True, "variables": HIST_VARS},
@@ -389,6 +420,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--checkpoint", default=None, help="override the weights path")
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="read the dataset from here instead of the template's path "
+        f"(default ${STAGED_DATA_ROOT_ENV})",
+    )
     parser.add_argument("--out", default=None, help="output root (default $EVAL_ROOT)")
     parser.add_argument(
         "--no-wandb",
@@ -431,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
 
     pscratch = os.environ.get("PSCRATCH", "/pscratch/sd/m/mahf708")
     out_root = args.out or os.environ.get("EVAL_ROOT", f"{pscratch}/sep26-eval")
+    data_root = args.data_root or os.environ.get(STAGED_DATA_ROOT_ENV) or None
 
     if args.all:
         targets = [r.runid for r in mc.expand(mc.RUNLIST)]
@@ -460,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 out_dir=out_dir,
                 wandb=not args.no_wandb,
+                data_root=data_root,
             )
         except EvalError as err:
             if args.all and "noise pathway" in str(err):

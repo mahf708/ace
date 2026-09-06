@@ -555,6 +555,7 @@ def _eval(
     n_ics: int = 8,
     nodes: int = 2,
     years: int = 1,
+    data_root: str | None = None,
 ) -> dict:
     import make_eval_config as ev
 
@@ -570,6 +571,7 @@ def _eval(
         years=years,
         seed=1,
         out_dir="/tmp/eval",
+        data_root=data_root,
     )
 
 
@@ -739,3 +741,13 @@ def test_pass_chooses_its_own_default_length(tmp_path):
         assert len(written) == 1
         config = yaml.safe_load(written[0].read_text())
         assert config["n_forward_steps"] == expected * mk.STEPS_PER_YEAR
+
+
+def test_eval_refuses_an_incomplete_staged_data_root(tmp_path):
+    """Staging is a copy, and a copy missing the years a rollout reaches gives
+    a short dataset rather than an error. The generator checks the staged root
+    against the template's before it will point a config at it."""
+    import make_eval_config as ev
+
+    with pytest.raises(ev.EvalError, match="stage the rest"):
+        _eval(data_root=str(tmp_path))
