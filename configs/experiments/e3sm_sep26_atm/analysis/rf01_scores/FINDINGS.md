@@ -138,7 +138,53 @@ RF01.S01, one checkpoint, four ways of driving the same weights. CRPS on Tat2m:
   reaches +0.970 against a theoretical ceiling of +1.0 for a symmetric
   collapse. The deterministic control is RF02.
 
-## 3. The two checkpoint kinds, and the epoch effect they were hiding
+## 3. Training improves the forecast and degrades the climate
+
+`best_ckpt.tar` is selected on validation loss, which tracks one-step skill.
+Swept across epochs with averaged weights -- one seed at a time, so nothing but
+the epoch moves -- short-lead and climate-lead skill go in **opposite
+directions, monotonically**.
+
+S01, ensemble-mean RMSE, percent change from epoch 10 to epoch 23 (negative is
+better):
+
+| variable | 1 d | 30 d | 90 d | 1 y |
+|---|---|---|---|---|
+| Tat2m | **-14.5%** | -2.6% | +16.1% | **+96.4%** |
+| TS | -12.5% | -3.3% | +8.5% | +72.5% |
+| Qat2m | -13.4% | -3.8% | +16.5% | +87.1% |
+| PS | -26.9% | -2.2% | +6.9% | +52.2% |
+| FLUT | -10.5% | -1.1% | +6.9% | +26.3% |
+| U_6 | -19.7% | -2.8% | +3.3% | +25.2% |
+| surface_precipitation_rate | -11.8% | -1.4% | +3.5% | +6.2% |
+
+Every variable, the same sign pattern, pivoting at 30 days. The raw Tat2m
+trace, where the size of it is easier to see:
+
+| S01 epoch | 1 d | 30 d | 90 d | 1 y |
+|---|---|---|---|---|
+| 10 | 0.4534 | 1.6710 | 1.6814 | **1.6722** |
+| 14 | 0.4258 | 1.6562 | 1.6983 | 1.7651 |
+| 18 | 0.4066 | 1.6616 | 1.6742 | 2.2051 |
+| 22 | 0.3922 | 1.6022 | 1.7499 | 3.2011 |
+| 23 | **0.3877** | 1.6272 | 1.9515 | 3.2840 |
+
+S02 reproduces it independently over epochs 22-28: 1 d improves 5.0%, 90 d
+worsens 40%, 1 y worsens 24%.
+
+**So validation loss is the wrong criterion for selecting a climate emulator's
+checkpoint**, and not marginally: it picks close to the worst checkpoint
+available for the climate range, because it is measuring the one range where
+more training still helps. The best one-year climate in this sweep is at epoch
+10, the earliest tested -- the sweep does not bracket the optimum, only shows
+it lies earlier than anything validation loss would choose.
+
+Two things the campaign has to do about it. **Score arms at a fixed epoch** --
+which §1 already requires for a different reason, since it halves the seed
+floor. And **choose that epoch deliberately**, because the choice moves
+climate-range conclusions by tens of percent and no default is neutral.
+
+### The two checkpoint kinds, which hid this for a day
 
 `best_ckpt.tar` and `ckpt_NNNN.tar` do not hold the same weights at the same
 epoch. Measured on RF01.S01 at epoch 22, where both files exist: all 135 tensors
@@ -149,18 +195,11 @@ of `ckpt_0022.tar`'s `ema.ema_params` are bit-identical to `best_ckpt.tar`'s
 So `best_ckpt.tar` has folded the running average into the weights the evaluator
 loads, and `ckpt_NNNN.tar` keeps raw weights there with the average beside them.
 `analysis/checkpoint_epoch.py` reports which is which and warns when a set mixes
-them; `analysis/ema_checkpoint.py` folds one into the other, verified at
-135/135 tensors against the epoch where both exist.
-
-With that controlled, the epoch effect is visible and large. **S02 at epoch 22
-scores 2.341 K at 90 days; at epoch 28 it scores 3.286 K, 40% worse** -- same
-seed, same weight kind, only the epoch differing -- while its validation loss
-*improved* from 0.0973 to 0.0934. Epoch 28 is what `best_ckpt.tar` selected.
-
-That is the checkpoint-selection question (TODO C2) with evidence behind it for
-the first time. A systematic sweep is running: S01 at epochs 10/14/18/22/23 and
-S02 across 22/24/26/28, all averaged weights, one seed at a time, to see whether
-the degradation is monotone in epoch or particular to S02.
+them; `analysis/ema_checkpoint.py` folds one into the other, verified 135/135
+against the epoch where both exist. Without that second tool none of the sweep
+above is possible: every epoch other than an arm's own `best_ckpt` would have
+carried raw weights, and raw weights are worse than averaged by more than the
+whole epoch effect (S01 at epoch 22: 1.750 K averaged, 4.130 K raw, at 90 days).
 
 Two working rules regardless:
 
