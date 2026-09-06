@@ -229,7 +229,10 @@ and `sbatch-scripts/submit-eval.sh` now exist, with 17 tests in
   scratch -- the difference between fitting the `_CAP_aigs_hist` window and not.
   All three seeds moved to `FME_DATA_ROOT=/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run`
   at 11:24; loss curves are indistinguishable across the switch, and the file
-  set is identical (1501 files, 1940-2065, matching sizes).
+  set is identical (1501 files, 1940-2065, matching sizes). CONFIRMED over the
+  next 3.2 h: 448 intervals across the three seeds, **zero stalls**, max 85-90 s
+  against a 72-74 s median -- a 1.2x tail where CFS ran to 25x. The prediction
+  was falsifiable and held, so the filesystem is the whole of it.
 * **The read tail is the mechanism, not the read cost.** Replaying the loader's
   own pattern (55 variables x 12 consecutive timesteps) on idle nodes at 1, 16
   and 64 concurrent readers: CFS median 4.6 s, p99 46 s, **max 530 s**; scratch
