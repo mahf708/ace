@@ -74,7 +74,15 @@ RF01_SEEDS = ("S01", "S02", "S03")
 # rank, which is what the 16-IC stall (below) leaves as the largest shape that
 # reliably completes.
 DEFAULT_NODES = 2
-DEFAULT_YEARS = 5
+
+# Rollout length, in years, defaulted per pass rather than shared.  The scores
+# pass is read at fixed leads (SCORE_STEPS below) and rolling out past the last
+# of them buys no ensemble metric -- only a better-sampled climatology, which
+# is the trajectory pass's job and costs five times as much here.  The
+# trajectory pass wants the length, because drift is what it measures.
+# `--years` overrides either.
+SCORES_YEARS = 1
+TRAJ_YEARS = 5
 
 # 16 ICs is the template's held-out block and it is what the scores pass
 # wants.  It is not the default, because evaluator runs on this data stall.
@@ -372,7 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--ics", type=int, default=DEFAULT_ICS)
     parser.add_argument("--nodes", type=int, default=DEFAULT_NODES)
-    parser.add_argument("--years", type=int, default=DEFAULT_YEARS)
+    parser.add_argument(
+        "--years",
+        type=int,
+        default=None,
+        help=f"rollout length (default {SCORES_YEARS} for scores, "
+        f"{TRAJ_YEARS} for traj)",
+    )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--checkpoint", default=None, help="override the weights path")
     parser.add_argument("--out", default=None, help="output root (default $EVAL_ROOT)")
@@ -405,6 +419,9 @@ def main(argv: list[str] | None = None) -> int:
     members = args.members
     if members is None:
         members = 4 if args.which_pass == "scores" else 1
+    years = args.years
+    if years is None:
+        years = SCORES_YEARS if args.which_pass == "scores" else TRAJ_YEARS
     if args.which_pass == "traj" and members > 1:
         parser.error(
             "the trajectory pass writes one member per initial condition: "
@@ -439,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
                 members=members,
                 n_ics=args.ics,
                 nodes=args.nodes,
-                years=args.years,
+                years=years,
                 seed=args.seed,
                 out_dir=out_dir,
                 wandb=not args.no_wandb,

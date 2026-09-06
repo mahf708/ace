@@ -695,3 +695,47 @@ def test_eval_config_uses_the_narrowed_pattern():
     # the first eight initial conditions stop in 2043, so one decade covers
     # even a five-year rollout from them
     assert "204*" in _eval(n_ics=8, years=5)["loader"]["dataset"]["file_pattern"]
+
+
+def test_scores_pass_stops_at_the_last_scored_lead():
+    """The scores pass is read at fixed leads, so rolling out past the last of
+    them costs compute and yields no ensemble metric. Its default length is
+    exactly the last lead; the trajectory pass, which measures drift, is
+    longer."""
+    import make_eval_config as ev
+
+    assert ev.SCORES_YEARS * mk.STEPS_PER_YEAR == max(ev.SCORE_STEPS)
+    assert ev.TRAJ_YEARS > ev.SCORES_YEARS
+    scores = _eval(which_pass="scores", years=ev.SCORES_YEARS)
+    assert scores["n_forward_steps"] == max(ev.SCORE_STEPS)
+    # every scored lead is still reachable, so nothing was lost by shortening
+    assert len(scores["aggregator"]["step_means"]) == len(ev.SCORE_STEPS)
+
+
+def test_pass_chooses_its_own_default_length(tmp_path):
+    """--years is optional and resolves per pass, so the cheap default is the
+    one you get by not thinking about it."""
+    import make_eval_config as ev
+
+    for which_pass, expected in (
+        ("scores", ev.SCORES_YEARS),
+        ("traj", ev.TRAJ_YEARS),
+    ):
+        out = tmp_path / which_pass
+        assert (
+            ev.main(
+                [
+                    "RF01.S01",
+                    "--pass",
+                    which_pass,
+                    "--out",
+                    str(out),
+                    "--no-wandb",
+                ]
+            )
+            == 0
+        )
+        written = list(out.glob("*/config.yaml"))
+        assert len(written) == 1
+        config = yaml.safe_load(written[0].read_text())
+        assert config["n_forward_steps"] == expected * mk.STEPS_PER_YEAR
