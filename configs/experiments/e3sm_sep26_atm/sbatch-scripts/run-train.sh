@@ -169,11 +169,28 @@ fi
 # those three trained seeds instead of re-running them for ~970 node-hours.
 #
 # It matters because training is I/O bound on the project filesystem the same
-# way evaluation was. MEASURED on RF02's first two hours: 60-74% of elapsed
-# time inside stalls of 8-29 minutes, with `training_samples_per_second`
-# dropping from 1.49 to 0.07 and nothing in the log between two step lines.
-if [ -n "${FME_DATA_ROOT:-}" ]; then
-    [ -d "$FME_DATA_ROOT" ] || { echo "FME_DATA_ROOT=$FME_DATA_ROOT is not a directory" >&2; exit 1; }
+# way evaluation was, so Lustre is the default rather than an opt-in.
+# MEASURED 2026-09-06 across three RF02 seeds, same code and same reservation:
+# CFS stalled 8-29 minutes at one per 24.5 min and captured 39-44% of the rate
+# its own median implied; Lustre captures 94-97%. That is 2.2x end to end, and
+# it is the difference between the campaign fitting the reservation and not.
+# Lustre does cost 4-7% in the typical step (median 69 s per 100 batches
+# against 72-74 s) -- we give up 4% of the best case to stop losing 60% of it.
+#
+# `FME_DATA_ROOT=` -- explicitly empty -- opts back out and leaves the
+# template's CFS path alone. Hence ${VAR-default}, not ${VAR:=default}, which
+# would swallow the empty value and make the opt-out silently do nothing.
+FME_DATA_ROOT="${FME_DATA_ROOT-${PSCRATCH:?PSCRATCH must be set}/v3.LR.historical_0101.aigo/run}"
+if [ -n "$FME_DATA_ROOT" ]; then
+    if [ ! -d "$FME_DATA_ROOT" ]; then
+        # Failing here beats falling back to CFS quietly. A silent fallback
+        # costs 2.2x and looks exactly like a slow machine, which is the
+        # diagnosis this default exists to spare the next person.
+        echo "FME_DATA_ROOT=$FME_DATA_ROOT is not a directory." >&2
+        echo "  Stage the data first:  $HERE/stage-data.sh --training" >&2
+        echo "  Or accept CFS and its 2.2x:  FME_DATA_ROOT= $0 $REALM ..." >&2
+        exit 1
+    fi
     # data_path only: the normalisation statistics are read once at startup and
     # are not worth a second copy to keep in step.
     sed -i "s#^\( *-\? *data_path: \).*/v3.LR.historical_0101.aigo/run#\1${FME_DATA_ROOT%/}#" \

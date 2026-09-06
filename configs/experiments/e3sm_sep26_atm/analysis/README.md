@@ -91,10 +91,12 @@ than steps, with the epoch boundary (validation plus three checkpoint writes,
 330–900 s at every multiple of 8217 batches) excluded rather than counted.
 `io_tail.py` — the loader's own read replayed against one filesystem at a
 chosen concurrency, reporting the tail. Together they answered the CFS-vs-
-Lustre question for training on 2026-09-06: identical medians, 115× versus 2×
-tails, 39–54% of wall clock lost on CFS and none on Lustre. Point a run at
-Lustre with `FME_DATA_ROOT`, which rewrites `data_path` in the staged config
-only — never the template, which `check_campaign.py` matches against aug26.
+Lustre question for training on 2026-09-06: the same compute floor either way,
+115× versus 2× tails, 39–54% of wall clock lost on CFS and none on Lustre —
+which Lustre pays for with 4–7% on the typical step. `run-train.sh` defaults
+`FME_DATA_ROOT` to the staged copy; it rewrites `data_path` in the staged
+config only — never the template, which `check_campaign.py` matches
+against aug26.
 
 ## Earlier
 

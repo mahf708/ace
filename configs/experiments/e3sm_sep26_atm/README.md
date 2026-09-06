@@ -294,14 +294,23 @@ template was copied from it and five arms difference against those three seeds.
   GPUs. A rank in uninterruptible `D` while other GPUs sit at 100% is this, not
   an arm that needs more memory. Stage to Lustre first — that also removed the
   16-IC stall, which was never about the initial-condition count.
-* **Training loses 40–55% of wall clock to CFS, and the median hides it.**
-  Measured 2026-09-06 on RF02, three 4-node seeds of one arm: the `Step N:`
-  interval is bimodal, median 69–71 s on either filesystem — that part is
-  compute-bound — with 8–29 minute stalls on CFS at **one per 24.5 min**
-  (22 stalls over 539 min). Effective throughput 1900–2100 batches/h against
-  ~4970 on scratch. At 8217 batches/epoch that is 111–124 h for 30 epochs
-  versus 48 h. Measure **stall frequency and lost-time fraction**, never median
-  step time. Set `FME_DATA_ROOT` (see below) rather than editing the template.
+* **Training reads Lustre by default, and it is worth 2.2×.** Measured
+  2026-09-06 on RF02, three 4-node seeds of one arm: the `Step N:` interval is
+  bimodal, with 8–29 minute stalls on CFS at **one per 24.5 min** (22 stalls
+  over 539 min). Against the rate each filesystem's own median implies, CFS
+  captured 39–44% and Lustre captures 94–97%. At 8217 batches/epoch that is
+  111–124 h for 30 epochs versus 48 h. `run-train.sh` now defaults
+  `FME_DATA_ROOT` to `$PSCRATCH/v3.LR.historical_0101.aigo/run` and **fails**
+  if it is missing — stage it with `./sbatch-scripts/stage-data.sh --training`.
+  `FME_DATA_ROOT=` (explicitly empty) opts back out to CFS. The rewrite touches
+  the staged config only, never the template.
+* **Lustre is not free: it costs 4–7% in the typical step.** The compute floor
+  is identical (min 66–68 s per 100 batches on both, across a node change), but
+  p10 and median sit 3–5 s higher on Lustre — about 1 s of that is three seeds
+  sharing one copy. It buys a p90 of 77–82 s against 319–439 s. Measure **stall
+  frequency and lost-time fraction**, not median step time, or this 4% reads as
+  a regression and the 60% behind it stays invisible. Striping is not a lever:
+  the 600 training files already spread over 365 OSTs, at most 8 files each.
 * **Not every long interval is a stall.** The epoch boundary at each multiple of
   8217 runs validation and writes three checkpoints; it costs 330–900 s on every
   seed on every filesystem. Exclude it before counting stalls, or a clean
