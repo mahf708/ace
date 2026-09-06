@@ -84,6 +84,18 @@ writing a config with the placeholder still in it.
 `noise_amplitude.py` takes a `training_checkpoints/` directory. The others
 are single-process and need no arguments.
 
+## Filesystem
+
+`stall_rate.py` — what fraction of a run's wall clock went to stalls rather
+than steps, with the epoch boundary (validation plus three checkpoint writes,
+330–900 s at every multiple of 8217 batches) excluded rather than counted.
+`io_tail.py` — the loader's own read replayed against one filesystem at a
+chosen concurrency, reporting the tail. Together they answered the CFS-vs-
+Lustre question for training on 2026-09-06: identical medians, 115× versus 2×
+tails, 39–54% of wall clock lost on CFS and none on Lustre. Point a run at
+Lustre with `FME_DATA_ROOT`, which rewrites `data_path` in the staged config
+only — never the template, which `check_campaign.py` matches against aug26.
+
 ## Earlier
 
 `card-sweep.sh`, `steprate.py` — the 40 GB vs 80 GB memory and step-rate

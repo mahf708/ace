@@ -219,6 +219,34 @@ and `sbatch-scripts/submit-eval.sh` now exist, with 17 tests in
   13.5 s per window staged. A single run against CFS managed ~25 s, so the
   filesystem was the bottleneck and concurrency made it worse; staged, two at
   once each beat one run on CFS by a factor of two.
+* **Training is on Lustre too, and it is worth more than the eval staging was.**
+  MEASURED 2026-09-06 on RF02 -- three 4-node seeds of one arm, same code, same
+  reservation, same period, differing only in filesystem. The `Step N:` interval
+  is bimodal: median 69-71 s either way (compute-bound), with 8-29 minute stalls
+  on CFS at **one per 24.5 min**, 22 of them over 539 min of node time. Lost
+  wall clock 39-54%; effective throughput 1900-2100 batches/h against ~4970 on
+  scratch. At 8217 batches/epoch, 30 epochs is 111-124 h on CFS and 48 h on
+  scratch -- the difference between fitting the `_CAP_aigs_hist` window and not.
+  All three seeds moved to `FME_DATA_ROOT=/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run`
+  at 11:24; loss curves are indistinguishable across the switch, and the file
+  set is identical (1501 files, 1940-2065, matching sizes).
+* **The read tail is the mechanism, not the read cost.** Replaying the loader's
+  own pattern (55 variables x 12 consecutive timesteps) on idle nodes at 1, 16
+  and 64 concurrent readers: CFS median 4.6 s, p99 46 s, **max 530 s**; scratch
+  median 2.0 s, p99 3.0 s, **max 4.0 s** -- 115x versus 2x. Both medians are
+  flat in the number of readers. With `num_data_workers: 8` and
+  `prefetch_factor: 4` a rank holds ~32 batches, about 22 s of cover at
+  0.69 s/batch, and PyTorch's loader returns batches in worker-rotation order,
+  so one worker past that window blocks the rank and the all-reduce blocks the
+  other 15. Two caveats, both measured: the slow reads are **not** clustered by
+  node (3.1-4.7% per node, uniform), and the probe reopens a file per read while
+  the real loader amortizes opens, so its 4.6% exceedance rate is not a stall
+  rate. `analysis/io_tail.py` reproduces it, and `analysis/stall_rate.py`
+  counts the stalls.
+* **Not every long interval is a stall.** The epoch boundary at each multiple of
+  8217 runs validation and writes three checkpoints, costing 330-900 s on every
+  seed on every filesystem. `analysis/steprate.py` and any stall count must
+  exclude intervals spanning a boundary.
 * **The scores pass stops at its last scored lead.** It shared a five-year
   default with the trajectory pass, so four fifths of it produced no ensemble
   metric — only a better-sampled climatology, which is pass 2's job.

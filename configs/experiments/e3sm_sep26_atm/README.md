@@ -290,10 +290,22 @@ template was copied from it and five arms difference against those three seeds.
 * **The data loader is bimodal.** Step timing must be a median over windows.
 * **A config that parses is not a config that runs.** Smoke-test any new axis
   with a real forward *and backward* pass.
-* **Evaluations read CFS through DVS and it is the bottleneck**, not the GPUs.
-  A rank in uninterruptible `D` while other GPUs sit at 100% is this, not an
-  arm that needs more memory. Stage to Lustre first — that also removed the
+* **CFS through DVS is the bottleneck for evaluation *and* training**, not the
+  GPUs. A rank in uninterruptible `D` while other GPUs sit at 100% is this, not
+  an arm that needs more memory. Stage to Lustre first — that also removed the
   16-IC stall, which was never about the initial-condition count.
+* **Training loses 40–55% of wall clock to CFS, and the median hides it.**
+  Measured 2026-09-06 on RF02, three 4-node seeds of one arm: the `Step N:`
+  interval is bimodal, median 69–71 s on either filesystem — that part is
+  compute-bound — with 8–29 minute stalls on CFS at **one per 24.5 min**
+  (22 stalls over 539 min). Effective throughput 1900–2100 batches/h against
+  ~4970 on scratch. At 8217 batches/epoch that is 111–124 h for 30 epochs
+  versus 48 h. Measure **stall frequency and lost-time fraction**, never median
+  step time. Set `FME_DATA_ROOT` (see below) rather than editing the template.
+* **Not every long interval is a stall.** The epoch boundary at each multiple of
+  8217 runs validation and writes three checkpoints; it costs 330–900 s on every
+  seed on every filesystem. Exclude it before counting stalls, or a clean
+  scratch run looks like it stalled once per epoch.
 
 ## Files
 
@@ -306,6 +318,8 @@ template was copied from it and five arms difference against those three seeds.
 | `make_eval_config.py` | offline evaluation configs, both passes |
 | `sbatch-scripts/stage-data.sh` | copy the dataset off DVS before evaluating |
 | `analysis/eval_table.py` | read the scores pass: seed floor, noise ladder |
+| `analysis/stall_rate.py` | how much wall clock a run lost to stalls, epoch boundaries excluded |
+| `analysis/io_tail.py` | read-latency tail per filesystem, at a chosen concurrency |
 | `analysis/checkpoint_epoch.py` | which epoch a checkpoint is, and whether its weights are averaged or raw |
 | `analysis/ema_checkpoint.py` | averaged weights at any epoch, so arms can be scored at a fixed one |
 | `analysis/rf01_scores/` | the first scoring of RF01: the seed floor and what it permits |
