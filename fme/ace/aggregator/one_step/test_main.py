@@ -79,6 +79,8 @@ def test_labels_exist():
         "test/ensemble/rank_bias/mean_map/a",
         "test/ensemble/rank_dispersion/a",
         "test/ensemble/rank_dispersion/mean_map/a",
+        "test/ensemble/rank_outlier_rate/a",
+        "test/ensemble/rank_outlier_rate/mean_map/a",
     ]
     assert set(summary.logs.keys()) == set(expected_keys)
     assert summary.loss == summary.logs["test/mean/loss"]

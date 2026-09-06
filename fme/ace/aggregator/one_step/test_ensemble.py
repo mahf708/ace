@@ -8,6 +8,7 @@ from fme.ace.aggregator.one_step.ensemble import (
     EnsembleMeanRMSEMetric,
     RankBiasMetric,
     RankDispersionMetric,
+    RankOutlierRateMetric,
     SSRBiasMetric,
     _EnsembleAggregator,
 )
@@ -636,3 +637,55 @@ def test_rank_dispersion_pools_across_data_parallel_ranks():
     # a per-rank variance is exactly zero here; the pooled one is not
     assert torch.isfinite(got).all()
     assert (got > -1.0 + 1e-6).all(), got
+
+
+@pytest.mark.parametrize("n_sample", [2, 4, 10])
+def test_outlier_rate_near_zero_on_a_calibrated_ensemble(n_sample):
+    """Drawn from the truth's own distribution, the truth falls outside the
+    ensemble exactly 2/(M+1) of the time, so the statistic sits at zero."""
+    got = _record_calibrated(RankOutlierRateMetric(), n_sample, n_batch=600)
+    assert got.abs().mean() < 0.1, got.mean()
+
+
+def test_outlier_rate_reaches_its_ceiling_when_the_ensemble_collapses():
+    """Identical members that miss the truth put every sample in an end bin.
+    The ceiling is (M+1)/2 - 1: every sample outside against the 2/(M+1) a
+    calibrated ensemble would give."""
+    n_batch, n_sample = 8, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    gen = (target + 5.0).expand(n_batch, n_sample, 1, 2, 2).contiguous()
+    metric = RankOutlierRateMetric()
+    metric.record(target=target, gen=gen)
+    ceiling = (n_sample + 1) / 2 - 1
+    assert torch.allclose(metric.get(), torch.full((2, 2), ceiling), atol=1e-5)
+
+
+def test_outlier_rate_rises_monotonically_as_the_ensemble_narrows():
+    """It is a direct count of how often the ensemble missed the truth, so it
+    has to move one way as the ensemble is squeezed around a displaced centre."""
+    torch.manual_seed(0)
+    n_batch, n_sample = 2000, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    centre = target + torch.randn(n_batch, 1, 1, 2, 2)
+    rates = []
+    for spread in (2.0, 1.0, 0.5, 0.1):
+        metric = RankOutlierRateMetric()
+        metric.record(
+            target=target, gen=centre + spread * torch.randn(n_batch, n_sample, 1, 2, 2)
+        )
+        rates.append(metric.get().mean().item())
+    assert rates == sorted(rates), rates
+    # squeezed to nothing around a centre that is not the truth, every sample
+    # is an outlier: the ceiling of (M+1)/2 - 1
+    assert rates[-1] > 0.8 * ((n_sample + 1) / 2 - 1)
+
+
+def test_outlier_rate_is_zero_on_a_prescribed_cell():
+    """Every member equal to the target is not an outlier; it takes the
+    mid-rank and sits at the centre, the convention the other two follow."""
+    n_batch, n_sample = 8, 4
+    target = torch.randn(n_batch, 1, 1, 2, 2)
+    gen = target.expand(n_batch, n_sample, 1, 2, 2).contiguous()
+    metric = RankOutlierRateMetric()
+    metric.record(target=target, gen=gen)
+    assert torch.allclose(metric.get(), torch.zeros(2, 2), atol=1e-6)

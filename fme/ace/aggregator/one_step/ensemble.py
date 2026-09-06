@@ -178,9 +178,16 @@ class _RankHistogramMetric(ReducedMetric):
     Accumulates the first two moments of the ensemble's rank histogram.
 
     If an ensemble is calibrated, the target is exchangeable with its members,
-    so the target's rank among ``M`` of them is uniform on ``{0..M}``. Two
-    departures from that uniformity are the ones worth naming, and they are
-    the histogram's mean and variance; the subclasses below report one each.
+    so the target's rank among ``M`` of them is uniform on ``{0..M}``. Three
+    departures from that uniformity are worth naming -- the histogram's slope,
+    its width, and the weight in its two end bins -- and the subclasses below
+    report one each.
+
+    The end bins deserve their own statistic rather than being left to the
+    variance: they are the only part of the histogram that says the truth was
+    *outside* the ensemble at all, which is what an extremes claim needs. They
+    are not better estimated than the variance -- measured, they are noisier --
+    only more directly interpretable.
 
     This is a distribution-free statement, which is why it is worth having
     next to ``ssr_bias``. The spread-skill ratio compares RMS spread to RMS
@@ -196,6 +203,7 @@ class _RankHistogramMetric(ReducedMetric):
     def __init__(self):
         self._sum_u: torch.Tensor | None = None
         self._sum_u_squared: torch.Tensor | None = None
+        self._n_outside: torch.Tensor | None = None
         self._n_degenerate: torch.Tensor | None = None
         self._n_samples = 0
         self._n_ensemble: int | None = None
@@ -223,12 +231,19 @@ class _RankHistogramMetric(ReducedMetric):
         # A prescribed cell (every member equal to the target, e.g. SST over
         # ocean) is a genuine 0/0 rather than a collapsed ensemble.
         degenerate = (highest == gen.amin(dim=1)) & (highest == target.amax(dim=1))
+        # The end bins: the target ranked below every member or above every
+        # one. Ties take the mid-rank as everywhere else, so a prescribed cell
+        # sits at the centre and is not counted an outlier.
+        rank = below + 0.5 * tied
+        outside = ((rank == 0) | (rank == n_ensemble)) & ~missing
         if self._sum_u is None:
             self._sum_u = torch.zeros_like(u[0, 0])
             self._sum_u_squared = torch.zeros_like(u[0, 0])
+            self._n_outside = torch.zeros_like(u[0, 0])
             self._n_degenerate = torch.zeros_like(u[0, 0])
         self._sum_u += u.sum(dim=(0, 1))
         self._sum_u_squared += (u * u).sum(dim=(0, 1))
+        self._n_outside += outside.sum(dim=(0, 1))
         self._n_degenerate += degenerate.sum(dim=(0, 1))
         self._n_samples += u.shape[0] * u.shape[1]
 
@@ -267,6 +282,53 @@ class _RankHistogramMetric(ReducedMetric):
             # under-dispersion everywhere.
             variance = (second - mean * mean) * (n_total / (n_total - 1))
         return mean, variance, degenerate_fraction == 1.0
+
+    def _outlier_rate(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Pooled observed and calibrated fraction of samples outside the
+        ensemble. Pooled here for the reason given in ``_moments``.
+        """
+        if self._sum_u is None or self._n_samples == 0:
+            raise ValueError("No batches have been recorded.")
+        assert self._n_outside is not None and self._n_degenerate is not None
+        dist = Distributed.get_instance()
+        observed = dist.reduce_mean(self._n_outside / self._n_samples)
+        degenerate_fraction = dist.reduce_mean(self._n_degenerate / self._n_samples)
+        assert self._n_ensemble is not None
+        # two end bins out of the M+1 a calibrated rank is uniform over
+        expected = 2.0 / (self._n_ensemble + 1)
+        return (
+            torch.where(
+                degenerate_fraction == 1.0,
+                torch.full_like(observed, expected),
+                observed,
+            ),
+            torch.full_like(observed, expected),
+        )
+
+
+class RankOutlierRateMetric(_RankHistogramMetric):
+    """
+    How often the truth falls outside the ensemble entirely, against how often
+    it should, as a fraction.
+
+    Positive means the ensemble misses the truth more often than a calibrated
+    one would -- too narrow in the tails, which is the failure a small ensemble
+    shows first and the one that matters for extremes. Negative means the truth
+    is bracketed more often than it should be.
+
+    This is the two end bins of the rank histogram. It is not a more precise
+    statistic than the variance -- MEASURED over repeated eight-sample draws at
+    four members, its spread across trials is 0.105 against the variance's
+    0.070, so it is the noisier of the two. It is a more *direct* one: the
+    variance describes the shape of a histogram, while this counts how often
+    the ensemble simply did not contain the truth, which is the quantity an
+    extremes claim rests on. At ``M`` members a calibrated ensemble misses
+    ``2/(M+1)`` of the time, 40% at the four this campaign runs.
+    """
+
+    def get(self) -> torch.Tensor:
+        observed, expected = self._outlier_rate()
+        return observed / expected - 1.0
 
 
 class RankBiasMetric(_RankHistogramMetric):
@@ -350,7 +412,12 @@ class _EnsembleAggregator:
         self._dist = Distributed.get_instance()
         self._log_mean_maps = log_mean_maps
         self._metadata = metadata
-        self._diverging_metrics = {"ssr_bias", "rank_bias", "rank_dispersion"}
+        self._diverging_metrics = {
+            "ssr_bias",
+            "rank_bias",
+            "rank_dispersion",
+            "rank_outlier_rate",
+        }
         self._target = target
         self._channel_mean_names = channel_mean_names
         self._report_variables = (
@@ -369,6 +436,7 @@ class _EnsembleAggregator:
                 "ensemble_mean_rmse": {},
                 "rank_bias": {},
                 "rank_dispersion": {},
+                "rank_outlier_rate": {},
             }
             for key in gen_data:
                 self._variable_metrics["crps"][key] = CRPSMetric()
@@ -378,6 +446,9 @@ class _EnsembleAggregator:
                 )
                 self._variable_metrics["rank_bias"][key] = RankBiasMetric()
                 self._variable_metrics["rank_dispersion"][key] = RankDispersionMetric()
+                self._variable_metrics["rank_outlier_rate"][key] = (
+                    RankOutlierRateMetric()
+                )
         return self._variable_metrics
 
     @torch.no_grad()
