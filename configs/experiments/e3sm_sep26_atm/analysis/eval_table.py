@@ -174,16 +174,22 @@ def ladder(data: dict, variables: list[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("root", help="the eval root holding <arm>.<seed>.eval-* dirs")
+    parser.add_argument(
+        "root", nargs="+", help="eval roots holding <arm>.<seed>.eval-* dirs"
+    )
     parser.add_argument("--metric", default="crps", choices=METRICS)
     parser.add_argument("--vars", nargs="+", default=DEFAULT_VARS)
     parser.add_argument("--seeds", action="store_true", help="the seed noise floor")
     parser.add_argument("--ladder", action="store_true", help="overrides vs keep")
     args = parser.parse_args(argv)
 
-    data = collect(args.root)
+    # Several roots merge into one table so that, say, an epoch-matched set can
+    # be read beside the default one. A later root wins a repeated key.
+    data: dict = {}
+    for root in args.root:
+        data.update(collect(root))
     if not data:
-        print(f"no scores-pass output under {args.root}", file=sys.stderr)
+        print(f"no scores-pass output under {' '.join(args.root)}", file=sys.stderr)
         return 1
     present = {
         var
@@ -200,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     runs = ", ".join(".".join(k) for k in sorted(data))
-    print(f"{len(data)} runs under {args.root}\n  {runs}\n")
+    print(f"{len(data)} runs under {' '.join(args.root)}\n  {runs}\n")
     if args.seeds:
         seeds(data, variables)
     elif args.ladder:
