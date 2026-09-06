@@ -56,8 +56,8 @@ import copy
 import datetime
 import glob
 import os
-import subprocess
 import pathlib
+import subprocess
 import sys
 
 import make_campaign as mc
@@ -127,6 +127,26 @@ DEFAULT_ICS = 16
 # unset keeps `best_ckpt.tar`, which is right for a one-off look at an arm and
 # wrong for any comparison between arms.
 SCORING_EPOCH_ENV = "SEP26_SCORING_EPOCH"
+
+# The epoch itself, chosen 2026-09-06 from a sweep on two seeds.
+#
+# One-year error has a broad minimum and one-day error falls monotonically, so
+# the two ranges want different checkpoints and the choice is a trade.  What
+# picks 10 rather than 14 is that the seeds disagree about 14: S01 is 5.7% off
+# its one-year minimum there and S02 is 31% off, while at 10 both sit at their
+# minimum (+0.1% and +0.0%) and within 0.6% of their best 90-day.  One seed's
+# basin extends further than the other's, and 10 is inside both.
+#
+# It costs 17-22% of one-day skill against the fully-trained checkpoint, which
+# is the right side of a trade whose other end is 92-135% of one-year skill;
+# 30-day is flat across the whole range either way.
+#
+# CAVEAT worth carrying: at epoch 10 the model is short of its final one-day
+# skill, so a *weather-range* comparison here partly measures which objective
+# converges faster.  Every arm is equally early, which contains that but does
+# not remove it -- score a second time at the converged end for weather claims,
+# and say which epoch a number came from.
+SCORING_EPOCH = 10
 
 # Where the evaluator reads its data.  The training template points at the
 # project tree on CFS, which the compute nodes see through DVS -- and the
@@ -523,9 +543,10 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="score at this epoch with averaged weights, building the folded "
-        f"checkpoint if needed (default ${SCORING_EPOCH_ENV}). Required for any "
-        "comparison between arms: best_ckpt.tar's epoch differs per arm and "
-        "doubles the seed floor",
+        f"checkpoint if needed (default 10, or ${SCORING_EPOCH_ENV}). "
+        "0 means best_ckpt.tar, whose epoch differs per arm and doubles the "
+        "seed floor -- fine for a one-off look at an arm, wrong for any "
+        "comparison between them",
     )
     parser.add_argument(
         "--data-root",
@@ -570,8 +591,8 @@ def main(argv: list[str] | None = None) -> int:
     out_root = args.out or os.environ.get("EVAL_ROOT", f"{pscratch}/sep26-eval")
     data_root = args.data_root or os.environ.get(STAGED_DATA_ROOT_ENV) or None
     epoch = args.epoch
-    if epoch is None and os.environ.get(SCORING_EPOCH_ENV):
-        epoch = int(os.environ[SCORING_EPOCH_ENV])
+    if epoch is None:
+        epoch = int(os.environ.get(SCORING_EPOCH_ENV) or SCORING_EPOCH)
 
     if args.all:
         targets = [r.runid for r in mc.expand(mc.RUNLIST)]
@@ -580,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for target in targets:
         run, runid, ckpt_dir = resolve_run(target)
-        if epoch is not None and args.checkpoint is None:
+        if epoch and args.checkpoint is None:
             ckpt_dir = fixed_epoch_checkpoint(ckpt_dir, runid, epoch)
         word = run.word if run is not None else None
         if run is None:

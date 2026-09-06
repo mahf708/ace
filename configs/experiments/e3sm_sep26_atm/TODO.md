@@ -248,42 +248,43 @@ epochs, and a set at one epoch but raw weights, both give ~33% for different
 reasons and looked like corroboration. Both controls are needed.
 See `analysis/rf01_scores/FINDINGS.md`.
 
-### C2. The checkpoint decision rule -- ANSWERED
-Averaged weights, one seed at a time, swept across epochs: **short-lead skill
-and climate-lead skill move in opposite directions, monotonically.** S01 from
-epoch 10 to 23, ensemble-mean RMSE, negative meaning better:
+### C2. The checkpoint decision rule -- DECIDED: score at epoch 10
+Averaged weights, swept on two seeds: one-day error falls monotonically with
+training while one-year error has a broad minimum and then climbs steeply, so
+the two ranges want different checkpoints. `best_ckpt.tar` is selected on
+validation loss, which tracks the improving end, and therefore lands close to
+the worst checkpoint available for climate.
 
-| variable | 1 d | 30 d | 90 d | 1 y |
+Tat2m ensemble-mean RMSE, each seed against its own best:
+
+| epoch | S01 1 d | S01 1 y | S02 1 d | S02 1 y |
 |---|---|---|---|---|
-| Tat2m | **-14.5%** | -2.6% | +16.1% | **+96.4%** |
-| TS | -12.5% | -3.3% | +8.5% | +72.5% |
-| Qat2m | -13.4% | -3.8% | +16.5% | +87.1% |
-| PS | -26.9% | -2.2% | +6.9% | +52.2% |
-| FLUT | -10.5% | -1.1% | +6.9% | +26.3% |
-| U_6 | -19.7% | -2.8% | +3.3% | +25.2% |
-| precipitation | -11.8% | -1.4% | +3.5% | +6.2% |
+| 4 | +46.9% | +1.3% | | |
+| 8 | +22.9% | **+0.0%** | | |
+| **10** | +16.9% | **+0.1%** | +22.3% | **+0.0%** |
+| 14 | +9.8% | +5.7% | +14.0% | **+31.2%** |
+| 22 | +1.1% | +91.7% | +5.2% | +89.3% |
+| 28 | | | +0.0% | +134.7% |
 
-Every variable, same sign pattern, pivoting at 30 days. S02 reproduces it over
-epochs 22-28 independently.
+**Epoch 10, because the seeds agree there and disagree at 14.** S01's one-year
+basin still holds at 14 (+5.7%); S02's does not (+31.2%). At 10 both are at
+their minimum and within 0.6% of their best 90-day. It costs 17-22% of one-day
+skill against the fully-trained checkpoint, against a 92-135% one-year penalty
+at that checkpoint, with 30-day flat across the whole range.
 
-`best_ckpt.tar` is chosen on validation loss, which tracks the one range where
-more training still helps, so **it picks close to the worst available checkpoint
-for the climate range**. The best one-year climate in the sweep is at epoch 10,
-the earliest tested; the sweep bounds the optimum from above but does not
-bracket it.
+`SCORING_EPOCH = 10` in `make_eval_config.py` is now the default, so an arm
+scored without thinking is scored comparably; `--epoch 0` restores
+`best_ckpt.tar` for a one-off look at a single arm.
 
-**Decisions this forces, both before P2 is queued:**
-1. Score arms at a **fixed** epoch. (D1b already requires this; it halves the
-   seed floor.)
-2. **Choose** that epoch, deliberately and campaign-wide. It moves
-   climate-range conclusions by tens of percent, and no default is neutral --
-   including "whatever `best_ckpt` holds", which is the worst of them.
-3. Consider whether the campaign wants a climate-based selection criterion at
-   all, e.g. inline 90-day or annual drift rather than one-step validation loss.
-   That is a training-loop change, not an analysis one.
+**Carry this caveat with any weather-range number.** At epoch 10 the model is
+short of its final one-day skill, so a weather comparison there partly measures
+which objective *converges faster*. Every arm being equally early contains that
+without removing it. For weather claims, score a second time at the converged
+end and label which epoch a number came from -- both epochs for 16 arms at 3
+seeds is ~60 node-hours against a 6,230 budget.
 
-Extending the sweep below epoch 10 would find the optimum; it is 19 minutes per
-point with `analysis/ema_checkpoint.py`.
+A side benefit: epoch 10 is a third of a 30-epoch run, so an arm becomes
+scoreable long before it finishes.
 
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until

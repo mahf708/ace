@@ -191,6 +191,15 @@ narrow in the core and too wide in the tails passes the first and fails the
 second, and since the arms here differ in exactly how their loss shapes a
 distribution, that is the distinction the campaign is built to see.
 
+**Arms are scored at epoch 10 with averaged weights**, which is the default —
+`--epoch 0` restores `best_ckpt.tar` for a one-off look at a single arm. Two
+measurements force it: `best_ckpt.tar`'s epoch differs per arm, which doubles
+the seed floor from 14.5% to 33% at 90 days; and it is selected on validation
+loss, which improves monotonically while one-year skill degrades by up to 135%,
+so it picks close to the worst checkpoint for climate. Epoch 10 is where two
+seeds agree — both at their one-year minimum — where epoch 14 is fine for one
+seed and 31% degraded for the other. See `analysis/rf01_scores/FINDINGS.md` §3.
+
 **Pin the weights before comparing anything.** An arm still training rewrites
 `best_ckpt.tar` whenever validation improves — E01.S02's moved at 17:20 on
 2026-09-05, twenty minutes before an evaluation read it. A single run is still

@@ -809,3 +809,27 @@ def test_eval_refuses_to_write_through_a_symlinked_output_dir(tmp_path):
     (link_root / "RF01.S01.eval-scores").symlink_to(real / "RF01.S01.eval-scores")
     assert ev.main(["RF01.S01", "--out", str(link_root), "--no-wandb"]) == 2
     assert not (real / "RF01.S01.eval-scores" / "config.yaml").exists()
+
+
+def test_arms_are_scored_at_a_fixed_epoch_by_default():
+    """The campaign compares arms, and `best_ckpt.tar`'s epoch differs per arm
+    -- which doubles the seed floor and, worse, selects on a criterion that
+    degrades the climate. So the default is a fixed epoch, and getting the
+    right thing must not require remembering a flag."""
+    import make_eval_config as ev
+
+    assert ev.SCORING_EPOCH > 0
+    # reachable by every arm: they train 30 epochs, and the epoch has to be
+    # early enough that an arm is scoreable well before it finishes
+    assert ev.SCORING_EPOCH <= 15
+
+
+def test_fixed_epoch_refuses_an_epoch_the_arm_has_not_reached(tmp_path):
+    """An arm that has not trained to the scoring epoch cannot be scored at it,
+    and saying so is better than silently falling back to best_ckpt -- a silent
+    fallback is exactly how the two-checkpoint-kinds confound went unnoticed."""
+    import make_eval_config as ev
+
+    (tmp_path / "training_checkpoints").mkdir()
+    with pytest.raises(ev.EvalError, match="no checkpoint for epoch"):
+        ev.fixed_epoch_checkpoint(str(tmp_path), "SOME.run", 999)
