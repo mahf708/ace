@@ -281,7 +281,8 @@ template was copied from it and five arms difference against those three seeds.
   with a real forward *and backward* pass.
 * **Evaluations read CFS through DVS and it is the bottleneck**, not the GPUs.
   A rank in uninterruptible `D` while other GPUs sit at 100% is this, not an
-  arm that needs more memory. Stage to Lustre first.
+  arm that needs more memory. Stage to Lustre first — that also removed the
+  16-IC stall, which was never about the initial-condition count.
 
 ## Files
 

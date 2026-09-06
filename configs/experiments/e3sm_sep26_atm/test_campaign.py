@@ -782,3 +782,14 @@ def test_noise_ladder_brackets_the_trained_amplitude():
     assert below == 0.5
     assert above == 2.0
     assert below < 1.0 < above
+
+
+def test_the_whole_held_out_block_is_the_default():
+    """The default was halved while 16-IC runs stalled in a DVS wait. That is
+    resolved by staging the data off DVS, and the full block is worth having:
+    at 8 the calibration statistics are still moving."""
+    import make_eval_config as ev
+
+    template_ics = ev._test_block(ev._template())["loader"]["start_indices"]["times"]
+    assert ev.DEFAULT_ICS == len(template_ics)
+    assert not hasattr(ev, "STALLING_ICS")

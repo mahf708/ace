@@ -206,7 +206,11 @@ and `sbatch-scripts/submit-eval.sh` now exist, with 17 tests in
   jobs sharing the filesystem: the full glob had every rank in uninterruptible
   I/O wait past 17 minutes, while the narrowed one (120 files) opened in ~5 and
   was at window 5 of 73 by then.
-* **8 ICs, not 16**, until the DVS stall is understood; the default says why.
+* **16 ICs again.** The stall that forced 8 was DVS, not the shape: staged on
+  Lustre, a 16-IC run on four nodes finished in 17.5 minutes with every GPU at
+  93-100% and nothing in D state. Worth the full block because at 8 the skill
+  metrics are stable to 0.2-3% but the calibration statistics are not — 8 to 16
+  moves one-year `ssr_bias` by 0.08 on both Tat2m and PS.
 * **The data is staged off DVS.** `sbatch-scripts/stage-data.sh` copies the
   decade to Lustre in 77 s at 3.3 GB/s, and `--data-root` points a config at
   it. MEASURED 2026-09-05, the same two concurrent 8-IC evaluations either

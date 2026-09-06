@@ -86,23 +86,27 @@ DEFAULT_NODES = 2
 SCORES_YEARS = 1
 TRAJ_YEARS = 5
 
-# 16 ICs is the template's held-out block and it is what the scores pass
-# wants.  It is not the default, because evaluator runs on this data stall.
+# 16 ICs is the template's whole held-out block, and it is the default again.
 #
-# What is actually known: ranks park in uninterruptible D state inside the DVS
-# client (`dvsipc_wait_for_resp`, `ipclower_tx_request`) part-way through a
-# rollout and never return.  Three separate 16-IC attempts stalled at the same
-# window, on three nodes, with and without forked loader workers, while 8- and
-# 4-IC runs reading the same files did not
-# (`analysis/noise_decomp/REVIEW.md` 3.2).  But on 2026-09-04 a 4-IC run
-# stalled the same way while two other evaluations were reading the same tree,
-# so **initial-condition count is not the whole story and reducing it is a
-# mitigation rather than a diagnosis** -- concurrent load on the filesystem is
-# implicated too.  8 is the default because it is the largest shape observed to
-# complete; a stalled job holds its allocation silently, so `run-eval.sh`
-# always sets a deadline.
-DEFAULT_ICS = 8
-STALLING_ICS = 16
+# It was not, for a while.  Three separate 16-IC attempts parked ranks in
+# uninterruptible D state inside the DVS client (`dvsipc_wait_for_resp`,
+# `ipclower_tx_request`) and never returned, while 8- and 4-IC runs reading the
+# same files finished (`analysis/noise_decomp/REVIEW.md` 3.2).  Then on
+# 2026-09-04 a 4-IC run stalled the same way under concurrent load, which said
+# the initial-condition count was a correlate rather than the cause.
+#
+# RESOLVED 2026-09-05: the cause is DVS, and staging the dataset to Lustre
+# removes it.  A 16-IC run on four nodes against a staged copy completed in
+# 17.5 minutes with every GPU at 93-100% and nothing in D state.  The count was
+# never the variable; it was how much traffic the shape put through DVS.
+#
+# Why the full block rather than half of it, now that both work: at 8 ICs the
+# skill metrics are already stable to 0.2-3%, but the calibration statistics
+# are not -- going 8 -> 16 moves `ssr_bias` at one year by 0.08 on both Tat2m
+# and PS.  Calibration is a second-moment statement about a small sample, and
+# it wants the samples.  A stalled job still holds its allocation silently, so
+# `run-eval.sh` keeps its deadline.
+DEFAULT_ICS = 16
 
 # Where the evaluator reads its data.  The training template points at the
 # project tree on CFS, which the compute nodes see through DVS -- and the
@@ -485,13 +489,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.all == bool(args.runid):
         parser.error("give a run id or --all, not both")
-    if args.ics == STALLING_ICS:
-        print(
-            f"warning: {STALLING_ICS} initial conditions is the shape that "
-            "stalled in a DVS wait on every attempt; two 8-IC jobs cover the "
-            "same block. See analysis/noise_decomp/REVIEW.md 3.2.",
-            file=sys.stderr,
-        )
     members = args.members
     if members is None:
         members = 4 if args.which_pass == "scores" else 1
