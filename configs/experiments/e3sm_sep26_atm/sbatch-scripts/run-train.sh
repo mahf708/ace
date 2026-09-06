@@ -162,6 +162,27 @@ else
     export CONFIG_NAME="config-train-${REALM}.yaml"
     cp "$EXP_DIR/config-train-${REALM}.yaml" "$CONFIG_DIR/"
 fi
+# Where the training data is read from is an operational choice, not part of
+# the science, so it is rewritten in the staged copy rather than in the
+# template. The template has to stay byte-identical to aug26's E01 config --
+# check_campaign.py asserts it, because RF01 *is* E01 and the campaign inherits
+# those three trained seeds instead of re-running them for ~970 node-hours.
+#
+# It matters because training is I/O bound on the project filesystem the same
+# way evaluation was. MEASURED on RF02's first two hours: 60-74% of elapsed
+# time inside stalls of 8-29 minutes, with `training_samples_per_second`
+# dropping from 1.49 to 0.07 and nothing in the log between two step lines.
+if [ -n "${FME_DATA_ROOT:-}" ]; then
+    [ -d "$FME_DATA_ROOT" ] || { echo "FME_DATA_ROOT=$FME_DATA_ROOT is not a directory" >&2; exit 1; }
+    # data_path only: the normalisation statistics are read once at startup and
+    # are not worth a second copy to keep in step.
+    sed -i "s#^\( *-\? *data_path: \).*/v3.LR.historical_0101.aigo/run#\1${FME_DATA_ROOT%/}#" \
+        "$CONFIG_DIR/$CONFIG_NAME"
+    n=$(grep -c "data_path: ${FME_DATA_ROOT%/}$" "$CONFIG_DIR/$CONFIG_NAME" || true)
+    [ "$n" -gt 0 ] || { echo "FME_DATA_ROOT set but no data_path was rewritten" >&2; exit 1; }
+    echo "data root: $FME_DATA_ROOT ($n paths rewritten in the staged config)" >&2
+fi
+
 cp "$HERE/requeueable-train.sh" "$CONFIG_DIR/"
 cp "$HERE/sbatch-train-${REALM}.sh" "$CONFIG_DIR/"
 chmod +x "$CONFIG_DIR/requeueable-train.sh"
