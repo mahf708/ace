@@ -231,31 +231,29 @@ not the ~100 estimated. Pass 2 output is still uncapped (~0.5 TB at three
 fields over five years).
 
 ### D1b. The seed floor constrains what the campaign can conclude -- MEASURED
-2026-09-05, three RF01 seeds pinned to epoch 22, 8 ICs x 4 members x 1 year.
-Coefficient of variation of ensemble-mean RMSE across the three seeds:
+2026-09-05, three RF01 seeds each from their own `best_ckpt.tar`, 8 ICs x 4
+members x 1 year. Coefficient of variation of ensemble-mean RMSE across seeds,
+2 m temperature: **2.6% at 1 d, 5.1% at 5 d, 2.6% at 30 d, 33.2% at 90 d, 13.1%
+at 1 y** (CRPS: 2.6 / 5.6 / 3.8 / 46.1 / 18.1%).
 
-| | 1 d | 5 d | 30 d | 90 d | 1 y |
-|---|---|---|---|---|---|
-| Tat2m | 4.0% | 8.3% | 6.3% | **28.6%** | **23.2%** |
-| TS | 3.2% | 7.2% | 8.0% | **34.3%** | **26.8%** |
-| Qat2m | 3.6% | 7.7% | 7.2% | **23.4%** | **21.0%** |
-| PS | 14.8% | 19.0% | 7.6% | 17.8% | 12.9% |
-| FLUT | 2.0% | 3.6% | 3.8% | 7.1% | 8.4% |
-| U_6 | 4.3% | 7.6% | 2.7% | 6.2% | 6.8% |
-| precipitation | 1.7% | 4.4% | 3.6% | 1.2% | 1.8% |
-
-An arm difference smaller than the entry is not a result at three seeds. The
-weather range is workable everywhere. At climate leads the thermodynamic fields
-are not: a 90-day temperature comparison needs an effect of about a third, and
-no arm in the run list is expected to move it that far. Precipitation, outgoing
-longwave and the winds hold to 8% and can be read at 90 d and 1 y.
+An arm difference smaller than that is not a result at three seeds. The weather
+range is workable; **a 90-day temperature comparison needs an effect of about a
+third**, and no arm in the run list is expected to move it that far.
 
 Open question this raises: **is three seeds enough for the climate-range claims
-the campaign wants to make on temperature?** Either the claims move to 90 d on
-the fields that hold, or the seed count goes up on the arms that need it, or
-the climate-range temperature reads are dropped. Decide before P2 is queued --
-it is a scoping decision, not an analysis one. See
-`analysis/rf01_scores/FINDINGS.md`.
+the campaign wants to make on temperature?** Either the claims move to 30 days,
+or the seed count goes up on the arms that need it, or the climate-range
+temperature reads are dropped. Decide before P2 is queued -- it is a scoping
+decision, not an analysis one.
+
+Two caveats, both in `analysis/rf01_scores/FINDINGS.md`:
+* The three checkpoints are at epochs 22, 24 and 28, so the floor is clean in
+  checkpoint *type* and confounded in *epoch*.
+* An attempt to fix that by scoring all three at epoch 22 **failed silently**:
+  `best_ckpt.tar` and `ckpt_NNNN.tar` at the same epoch hold different weights
+  (measured on S01, where both are epoch 22: max|diff| 5.1e-3 against a mean
+  magnitude of 1.9e-2). One run -- S01 from `ckpt_0022.tar`, ~19 minutes --
+  settles it. **Do that before quoting an epoch-controlled floor.**
 
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until
