@@ -233,6 +233,14 @@ def test_noise_override_mean_mode_averages_draws():
                     return_value=torch.full((1, 4, 8, 16), float(k), device=x.device),
                 ):
                     outs.append(model(x[:1]))
-    torch.testing.assert_close(stacked, torch.stack(outs).mean(dim=0))
+    # The two paths are the same arithmetic at different batch shapes -- three
+    # rows through one call against one row through three -- and in float32 a
+    # spectral network picks different kernels for the two. MEASURED at 2.9e-4,
+    # 0.07% of the mean output magnitude. The tolerance sits above that and far
+    # below what a real averaging error would produce: dropping one of the three
+    # draws moves these outputs by order 0.1.
+    torch.testing.assert_close(
+        stacked, torch.stack(outs).mean(dim=0), atol=1e-3, rtol=1e-3
+    )
     with pytest.raises(ValueError):
         model.set_noise_override(scale=1.0, mode="mean", draws=0)
