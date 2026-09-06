@@ -31,6 +31,14 @@ GENERATE="$EXP/make_eval_config.py"
 : "${PSCRATCH:?PSCRATCH must be set}"
 EVAL_ROOT="${EVAL_ROOT:-$PSCRATCH/sep26-eval}"
 
+# Evaluations are I/O bound against CFS through DVS and six times faster on a
+# staged copy (see stage-data.sh). Use one if it is there, and say so rather
+# than silently choosing a filesystem for the caller.
+if [ -z "${EVAL_DATA_ROOT:-}" ] && [ -d "$PSCRATCH/sep26-data" ]; then
+    export EVAL_DATA_ROOT="$PSCRATCH/sep26-data"
+    echo "using staged data at $EVAL_DATA_ROOT (unset EVAL_DATA_ROOT to read CFS)"
+fi
+
 ARMS=()
 PASS=scores
 LADDER=0
@@ -44,7 +52,7 @@ while [ $# -gt 0 ]; do
         --pass)         PASS="${2:?--pass needs scores or traj}"; shift 2 ;;
         --noise-ladder) LADDER=1; shift ;;
         --dry-run)      DRY=1; shift ;;
-        --ics|--nodes|--years|--members|--seed)
+        --ics|--nodes|--years|--members|--seed|--data-root)
                         EXTRA+=("$1" "$2"); shift 2 ;;
         -*)             echo "unknown option $1" >&2; exit 2 ;;
         *)              ARMS+=("$1"); shift ;;
