@@ -12,6 +12,7 @@ from fme.ace.aggregator.one_step.ensemble import (
     _EnsembleAggregator,
 )
 from fme.core.device import get_device
+from fme.core.distributed import Distributed
 from fme.core.gridded_ops import LatLonOperations
 from fme.core.typing_ import EnsembleTensorDict
 
@@ -602,3 +603,38 @@ def test_rank_metrics_are_nan_where_the_target_is_missing():
         got = metric.get()
         assert torch.isnan(got[0, 0])
         assert torch.isfinite(got[1, 1])
+
+
+@pytest.mark.parallel
+def test_rank_dispersion_pools_across_data_parallel_ranks():
+    """Each rank holds one initial condition, which is the shape the scores
+    pass runs in, and the pooled variance must be the variance of the union of
+    what the ranks saw rather than a mean of per-rank zeros.
+
+    Ranks record disjoint halves of a fixed set of ranks-in-the-histogram, so a
+    per-rank variance is far from the pooled one and averaging them cannot
+    recover it. Run under torchrun; also pins that the collective inside get()
+    is reached by every rank.
+    """
+    dist = Distributed.get_instance()
+    rank = dist.data_parallel_rank
+    world_size = dist.total_data_parallel_ranks
+    n_sample, n_y, n_x = 3, 2, 2
+    members = torch.arange(1.0, n_sample + 1, device=get_device()).reshape(
+        1, n_sample, 1, 1, 1
+    )
+    # rank r takes the (r mod n_sample+1)-th position: below all members,
+    # between each pair, or above all
+    position = 0.5 + (rank % (n_sample + 1))
+    target = torch.full(
+        (1, 1, 1, n_y, n_x), float(position), device=get_device()
+    )
+    metric = RankDispersionMetric()
+    metric.record(target=target, gen=members.expand(1, n_sample, 1, n_y, n_x))
+    got = metric.get()
+    if world_size == 1:
+        assert torch.isnan(got).all()
+        return
+    # a per-rank variance is exactly zero here; the pooled one is not
+    assert torch.isfinite(got).all()
+    assert (got > -1.0 + 1e-6).all(), got
