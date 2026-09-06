@@ -9,38 +9,55 @@ Shape throughout: 8 held-out initial conditions from the 2040s, 4 members each,
 1460 six-hourly steps (one year), scored at 6 h / 1 d / 5 d / 30 d / 90 d / 1 y.
 Two nodes, ~19 minutes, 0.63 node-hours per run.
 
-## 1. The seed floor, and what it forbids
+## 1. The seed floor, and what it permits
 
 **This is the number the campaign needs before it reads any arm difference.**
-All three seeds from their own `best_ckpt.tar` -- the same kind of checkpoint,
-which matters (§3) -- coefficient of variation of ensemble-mean RMSE across the
-three, 8 initial conditions:
+Three seeds, **averaged (EMA) weights, all at epoch 22**, 8 initial conditions.
+Coefficient of variation of ensemble-mean RMSE across the three:
 
 | variable | 1 d | 5 d | 30 d | 90 d | 1 y |
 |---|---|---|---|---|---|
-| Tat2m | 2.6% | 5.1% | 2.6% | **33.2%** | 13.1% |
-| CRPS, Tat2m | 2.6% | 5.6% | 3.8% | **46.1%** | 18.1% |
+| Tat2m | 0.4% | 3.5% | 1.0% | **14.5%** | 2.2% |
+| TS | 0.8% | 2.7% | 1.5% | 17.4% | 8.5% |
+| Qat2m | 0.7% | 2.6% | 1.1% | 11.2% | 2.3% |
+| T_7 | 0.4% | 4.4% | 0.8% | 11.8% | 4.4% |
+| PS | 1.1% | 6.9% | 2.5% | 9.1% | 3.3% |
+| FLUT | 0.5% | 0.8% | 0.0% | 2.2% | 5.4% |
+| U_6 | 0.7% | 3.4% | 2.2% | 0.8% | 4.2% |
+| surface_precipitation_rate | 0.3% | 1.8% | 0.2% | 1.7% | 3.4% |
+
+(Tat2m CRPS: 0.7 / 4.2 / 1.1 / 20.0 / 5.8%.)
 
 Read this as: **an arm difference smaller than the entry is not a result at
-three seeds.**
+three seeds.** Out to 30 days the floor is under 7% on everything, and even at
+90 days -- the worst lead -- it is 15-17% on the thermodynamic fields and under
+10% elsewhere. **Climate-range comparisons are within reach**, which is the
+opposite of what the first attempt at this number said.
 
-* **Weather range is workable.** At 1 d and 5 d the floor is a few percent, so
-  a 15-20% arm effect is comfortably readable.
-* **The climate range is not, for temperature.** A comparison of 90-day
-  temperature drift between two arms needs an effect of about a third to clear
-  three seeds, and the campaign does not expect effects that large.
-* It is driven by one seed. At 90 d, Tat2m RMSE is S01 1.75 K, S03 2.16 K,
-  S02 3.29 K -- S02 is not on a tail, it is 88% above S01. With three seeds the
-  standard deviation is a crude summary; the range is the honest one.
+### Why the first attempt said 33%
 
-**Caveat, and it is a real one.** These three checkpoints are at epochs 22, 24
-and 28, because `best_ckpt.tar` is whatever last improved validation loss. The
-comparison is clean in checkpoint *type* and confounded in *epoch*. §3 explains
-why the obvious fix did not work, and what would.
+Two controls are needed and neither alone is enough. The comparison must hold
+the **epoch** fixed, and it must hold the **weight kind** fixed -- `best_ckpt.tar`
+carries averaged weights, `ckpt_NNNN.tar` raw ones, and the evaluator loads
+whichever is in `stepper` (§3).
 
-**Per-variable numbers are deliberately not tabulated here.** The wider table
-this section used to carry came from a set that mixed checkpoint types (§3), so
-it is withdrawn rather than re-quoted from a smaller sample.
+| set | weights | epochs | 90 d CV | S01 | S02 | S03 |
+|---|---|---|---|---|---|---|
+| A `best_ckpt` | ema | 22/24/28 | 33.2% | 1.750 | 3.286 | 2.158 |
+| B `ckpt_0022` | raw | 22 | 33.4% | 4.130 | 3.005 | 2.079 |
+| **D folded** | **ema** | **22** | **14.5%** | 1.750 | 2.341 | 2.152 |
+
+Set A is inflated by the epoch spread, set B by raw weights being both worse
+and more variable -- S01 alone goes from 1.750 K to 4.130 K between averaged and
+raw weights at the same epoch, which is larger than any seed or epoch effect
+here. Because A and B happen to land on nearly the same number, comparing them
+looked like evidence that the epoch did not matter. It was two different
+problems reading alike.
+
+**So: score every arm at a fixed epoch with averaged weights.** Using
+`best_ckpt.tar` across arms does not do that, because its epoch is whatever last
+improved validation loss and therefore differs per arm; that alone doubles the
+floor. `analysis/ema_checkpoint.py` produces averaged weights at any epoch.
 
 ## 2. The noise ladder
 
@@ -121,47 +138,37 @@ RF01.S01, one checkpoint, four ways of driving the same weights. CRPS on Tat2m:
   reaches +0.970 against a theoretical ceiling of +1.0 for a symmetric
   collapse. The deterministic control is RF02.
 
-## 3. Epoch, seed, and a confound I introduced
+## 3. The two checkpoint kinds, and the epoch effect they were hiding
 
-`best_ckpt.tar` is rewritten whenever validation loss improves, so RF01's three
-seeds sat at three different epochs when first scored -- S01 at 22, S03 at 24,
-S02 at 28 -- and their 90-day RMSE was monotone in epoch (1.75, 2.16, 3.29 K)
-while validation loss improved monotonically (0.0975, 0.0954, 0.0934). That
-reads as "the checkpoint chosen on validation loss has the worst climate", and
-it would matter, because it is how every arm in this campaign will be selected.
+`best_ckpt.tar` and `ckpt_NNNN.tar` do not hold the same weights at the same
+epoch. Measured on RF01.S01 at epoch 22, where both files exist: all 135 tensors
+of `ckpt_0022.tar`'s `ema.ema_params` are bit-identical to `best_ckpt.tar`'s
+`stepper`, and differ from `ckpt_0022.tar`'s own `stepper` by up to 1.2e-2.
+`best_ckpt.tar` has no `ema_params` key at all.
 
-The obvious test is to re-score all three at a common epoch, and the per-epoch
-`ckpt_NNNN.tar` files make that possible. I ran it: S01 from its `best_ckpt`
-(already epoch 22), S02 and S03 from `ckpt_0022.tar`. The spread barely moved,
-which I read as "seed, not epoch".
+So `best_ckpt.tar` has folded the running average into the weights the evaluator
+loads, and `ckpt_NNNN.tar` keeps raw weights there with the average beside them.
+`analysis/checkpoint_epoch.py` reports which is which and warns when a set mixes
+them; `analysis/ema_checkpoint.py` folds one into the other, verified at
+135/135 tensors against the epoch where both exist.
 
-**That test does not hold.** `best_ckpt.tar` and `ckpt_0022.tar` at the *same
-epoch* contain different weights -- compared directly on S01, where both are
-epoch 22, `max|diff|` on a position embedding is 5.1e-3 against a mean magnitude
-of 1.9e-2. The two files store different things (almost certainly averaged
-against raw weights). So the "epoch-matched" set matched epoch and mismatched
-checkpoint type, and its numbers cannot separate the two.
+With that controlled, the epoch effect is visible and large. **S02 at epoch 22
+scores 2.341 K at 90 days; at epoch 28 it scores 3.286 K, 40% worse** -- same
+seed, same weight kind, only the epoch differing -- while its validation loss
+*improved* from 0.0973 to 0.0934. Epoch 28 is what `best_ckpt.tar` selected.
 
-The signature is visible in the data once you look: going from 8 to 16 initial
-conditions leaves S01 essentially unchanged (Tat2m 1 d RMSE 0.3922 -> 0.3915)
-while S02 and S03 both degrade by 10% (0.418 -> 0.464, 0.422 -> 0.466). One
-model generalises to the later initial conditions and two do not, which is a
-statement about weights, not seeds.
+That is the checkpoint-selection question (TODO C2) with evidence behind it for
+the first time. A systematic sweep is running: S01 at epochs 10/14/18/22/23 and
+S02 across 22/24/26/28, all averaged weights, one seed at a time, to see whether
+the degradation is monotone in epoch or particular to S02.
 
-**So: the epoch question is open, not settled.** The experiment that settles it
-is one more run -- S01 from `ckpt_0022.tar`, 8 ICs, about 19 minutes -- which
-makes all three the same checkpoint type at the same epoch. Until then, quote
-the §1 floor, which at least uses one checkpoint type throughout.
+Two working rules regardless:
 
-What survives regardless:
-
-* Everything in §2 and §4 is a **within-seed, same-checkpoint** comparison --
-  one set of weights driven several ways -- so none of it is touched by this.
-* Pin the weights before comparing anything, and pin the *same kind* of
-  weights. `eval.env` records path, size and mtime; size alone would have
-  caught this one, since the two files are 1.8 GB and 7.3 GB.
-* At 8 initial conditions the annual numbers are unstable in both seed and
-  epoch, so read 90 days.
+* Pin the weights before comparing anything, and pin the *same kind*. `eval.env`
+  records path, size and mtime; size alone separates the two kinds, at 1.8 GB
+  against 7.3 GB.
+* Everything in §2 and §4 is a **within-seed, same-checkpoint** comparison -- one
+  set of weights driven several ways -- so none of it is touched by any of this.
 
 ## 4. The calibration metrics, checked against the old ones
 
@@ -188,11 +195,13 @@ when the measured failure is that it is displaced. **At climate leads
 
 ## 5. What this changes
 
-0. **Re-score S01 from `ckpt_0022.tar`** and settle §3. One run, 19 minutes.
-1. **Read arm differences against §1.** In particular, do not plan to read
-   90-day or annual temperature drift between arms at three seeds.
+1. **Score every arm at a fixed epoch with averaged weights**, not at
+   `best_ckpt.tar`, whose epoch varies per arm and doubles the seed floor.
+2. **Read arm differences against §1.** Climate-range comparisons are workable;
+   90-day temperature needs an effect above ~15%.
 2. Score at 90 d rather than 1 y when a stable number is wanted at 8 ICs.
-3. Pin checkpoints before any cross-arm comparison.
+3. Pin checkpoints, and check `analysis/checkpoint_epoch.py` says one weight
+   kind across the set.
 4. Score arms at `keep`. The amplitude ladder is a separate axis, and mixing it
    into an arm comparison confounds two changes.
 5. RF02 remains the only control that can answer "does stochastic training beat

@@ -230,30 +230,35 @@ staged: ~19 min wall, ~0.63 node-hours. Sixteen arms x 3 seeds is ~30 node-h,
 not the ~100 estimated. Pass 2 output is still uncapped (~0.5 TB at three
 fields over five years).
 
-### D1b. The seed floor constrains what the campaign can conclude -- MEASURED
-2026-09-05, three RF01 seeds each from their own `best_ckpt.tar`, 8 ICs x 4
-members x 1 year. Coefficient of variation of ensemble-mean RMSE across seeds,
-2 m temperature: **2.6% at 1 d, 5.1% at 5 d, 2.6% at 30 d, 33.2% at 90 d, 13.1%
-at 1 y** (CRPS: 2.6 / 5.6 / 3.8 / 46.1 / 18.1%).
+### D1b. The seed floor, and how to keep it small -- MEASURED
+2026-09-05, three RF01 seeds, **averaged (EMA) weights all at epoch 22**, 8 ICs
+x 4 members x 1 year. CV of ensemble-mean RMSE across seeds, Tat2m: **0.4% at
+1 d, 3.5% at 5 d, 1.0% at 30 d, 14.5% at 90 d, 2.2% at 1 y.** Everything except
+the thermodynamic fields at 90 d is under 10% at every lead. Climate-range
+comparisons are workable.
 
-An arm difference smaller than that is not a result at three seeds. The weather
-range is workable; **a 90-day temperature comparison needs an effect of about a
-third**, and no arm in the run list is expected to move it that far.
+**Scoring at `best_ckpt.tar` doubles that floor to 33%**, because its epoch is
+whatever last improved validation loss and so differs per arm. So: **score every
+arm at a fixed epoch with averaged weights.** `analysis/ema_checkpoint.py`
+produces them from any `ckpt_NNNN.tar`, verified 135/135 tensors against the
+epoch where a real `best_ckpt` exists.
 
-Open question this raises: **is three seeds enough for the climate-range claims
-the campaign wants to make on temperature?** Either the claims move to 30 days,
-or the seed count goes up on the arms that need it, or the climate-range
-temperature reads are dropped. Decide before P2 is queued -- it is a scoping
-decision, not an analysis one.
+Two earlier readings of this number were wrong and are withdrawn: a set at mixed
+epochs, and a set at one epoch but raw weights, both give ~33% for different
+reasons and looked like corroboration. Both controls are needed.
+See `analysis/rf01_scores/FINDINGS.md`.
 
-Two caveats, both in `analysis/rf01_scores/FINDINGS.md`:
-* The three checkpoints are at epochs 22, 24 and 28, so the floor is clean in
-  checkpoint *type* and confounded in *epoch*.
-* An attempt to fix that by scoring all three at epoch 22 **failed silently**:
-  `best_ckpt.tar` and `ckpt_NNNN.tar` at the same epoch hold different weights
-  (measured on S01, where both are epoch 22: max|diff| 5.1e-3 against a mean
-  magnitude of 1.9e-2). One run -- S01 from `ckpt_0022.tar`, ~19 minutes --
-  settles it. **Do that before quoting an epoch-controlled floor.**
+### C2. The checkpoint decision rule -- EVIDENCE, sweep running
+`best_ckpt.tar` is selected on validation loss. **S02 at epoch 22 scores 2.341 K
+at 90 days; at epoch 28 -- what `best_ckpt` chose, on a validation loss that
+improved from 0.0973 to 0.0934 -- it scores 3.286 K, 40% worse.** Same seed,
+same weight kind. This is the first clean evidence for the suspicion; it was
+previously tangled with the two-checkpoint-kinds problem above.
+
+Running: S01 at epochs 10/14/18/22/23 and S02 at 22/24/26/28, averaged weights,
+to establish whether the degradation is monotone in epoch or particular to S02.
+If monotone, validation loss is the wrong selection criterion for this campaign
+and the rule has to change before arms are scored.
 
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until
