@@ -751,3 +751,23 @@ def test_eval_refuses_an_incomplete_staged_data_root(tmp_path):
 
     with pytest.raises(ev.EvalError, match="stage the rest"):
         _eval(data_root=str(tmp_path))
+
+
+def test_eval_env_records_which_weights_were_read(tmp_path):
+    """An arm still training rewrites best_ckpt.tar whenever validation
+    improves, so two evaluations of one arm hours apart can be two models --
+    which turns a seed spread into a comparison of epochs. The env records the
+    weights' size and mtime so that is checkable rather than assumed."""
+    import make_eval_config as ev
+
+    ckpt = tmp_path / "training_checkpoints"
+    ckpt.mkdir()
+    (ckpt / "best_ckpt.tar").write_bytes(b"weights")
+    lines = ev.checkpoint_provenance(str(ckpt / "best_ckpt.tar"))
+    assert any(line.startswith("# checkpoint_bytes 7") for line in lines)
+    assert any(line.startswith("# checkpoint_mtime 20") for line in lines)
+    # a checkpoint that does not exist yet is the normal state before an arm
+    # finishes, and must not stop a config being generated
+    assert ev.checkpoint_provenance(str(tmp_path / "nope")) == [
+        "# checkpoint not present at generation time"
+    ]
