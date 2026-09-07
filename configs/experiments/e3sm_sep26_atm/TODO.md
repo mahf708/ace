@@ -476,10 +476,84 @@ Done: epoch stability, degenerate-CRPS identity. Left:
 
 * **Confluence** is source of truth for the run list and factor alphabet. sep26
   uses a *different* convention and a *different* W&B project — needs a page.
-* **Allocation balance unknown** (`iris` returned 403). The campaign is
-  charge-bound, not concurrency-bound, so this is the binding number.
+* **Allocation is NOT the constraint** — the opposite of what this line said
+  while `iris` was returning 403. Measured 2026-09-07 (`iris` on a login node,
+  no `-c balance` subcommand; plain `iris` prints the table): e3sm_g has
+  **366,757 node-hours left of 685,674 (53%)**, and mahf708's own sub-allocation
+  90,858 of 100,000. The 26-arm campaign to epoch 10 is order 2,000 node-hours.
+  The campaign is **queue-bound**, not charge-bound, which inverts every
+  trade that was being made to save charge.
 * **Reservation extension pending** (4–7 days requested). At 96 nodes × 7 days =
-  16,128 node-hours, the full 19-run list is 36% of one window.
+  16,128 node-hours, the full 19-run list is 36% of one window. This is now the
+  single highest-value ask — see the queue numbers below.
+
+### E1. Queue physics off-reservation — MEASURED 2026-09-07
+
+`_CAP_aigs_hist` ends **2026-09-09 15:00**, and slurm stops *starting* 12 h jobs
+in it 12 h before that, so the reservation's real deadline for new work is
+**09-09 03:00**. The next wall after that is **Perlmutter maintenance 09-16
+06:00–22:00** (NERSC outage calendar); slurm carries the usual conservative
+placeholder for it, `maintenance_20260916`, 7 days wide over all 5,248 nodes, so
+nothing that cannot finish by 09-16 06:00 will start. `sbatch --test-only` for a
+fresh 4-node 12 h regular job answers "to start at 2026-09-18T22:50".
+
+**Walltime, not QOS, is the lever, and it is a cliff at 2 h.** GPU jobs of 2–16
+nodes in `gpu_regular`/`gpu_preempt`, submitted *and* started 09-04 → 09-07 (so
+no stale submissions inflating the wait):
+
+```
+tlimit     n    med wait   p90
+  <=1h   289      1.6 h    7.9 h
+  1-2h    52      3.0 h   12.9 h
+  2-3h    41     10.7 h   64.4 h
+  3-4h    22     26.1 h   39.3 h
+  4-6h    14     35.8 h   54.1 h
+ 6-12h    17     38.9 h   50.8 h
+  >12h    25     40.0 h   46.5 h
+```
+
+Past 2 h the wait climbs to a ~40 h plateau and **12 h is no worse than 6 h and
+no better than 48 h** — the choice inside that range is not a choice. Below 2 h,
+backfill takes the job almost immediately.
+
+Why us in particular: `sshare` gives mahf708 in e3sm_g **FairShare 0.0072**, with
+EffectvUsage 0.206 against NormShares 0.0029 — roughly 70× over share, mostly
+from this campaign. Priority scheduling will not favour us; **backfill is the
+only realistic path in, and backfill only takes short jobs**.
+
+`preempt` vs `regular`: preempt has a quarter the queue depth (1,192 pending
+against 4,859) at the same slurm priority (67679), but that does **not** convert
+into a shorter wait — over 09-05 → 09-07, median 50.4 h against regular's 35.1 h
+for 2–16 node jobs, better only in the tail (p90 85.7 h against 106.7 h). Take
+preempt for its **0.25× charge and its 2 h preemption guarantee**, not for speed.
+Preemption itself is barely happening: of ~299 preempt jobs that terminated
+since 09-05, **4 were PREEMPTED (1.3%)**.
+
+Which gives the off-reservation recipe: **`--qos preempt --time 02:00:00`**. A
+2 h request sits under the backfill cliff *and* at exactly the preemption
+guarantee, so it is effectively unpreemptable. Cost of chaining 2 h slots,
+measured rather than assumed: ~3 min to first training step after a restart, and
+at most one 1,000-batch checkpoint interval (~14 min, verified from the
+84000/85000/86000 timestamps) of redone work — call it 10 min, **~8% of a 2 h
+slot**. Against a median 3.0 h wait that is a 37% duty cycle, versus 23% for
+12 h slots. Reaching epoch 10 (21 h of compute) costs ~57 h of wall clock at 2 h
+against ~100 h at 12 h.
+
+Two things this does not settle:
+
+* A **requeued** job keeps its original submit time, so its age priority is
+  preserved and may restart far faster than a fresh submission. If so, long
+  slots recover most of the gap. Nothing in our history measures this — every
+  requeue we have ever done was inside a reservation, where the wait is ~0.1 min.
+  Settle it by running one seed at 2 h and one at 12 h and comparing duty cycle.
+* An inference epoch costs 17–57 min on top of the ~1.94 h training epoch
+  (8178 s at epoch 9 and 8091 s at epoch 3 against 6916–7158 s for a plain one),
+  and inference is **not** checkpointed internally. A 2 h slot still clears it,
+  because a restart resumes near the epoch end and then has the whole slot for
+  inference — but 2 h is the floor for this workload, not a value to shave.
+
+Also set `FME_MAIL_TYPE=NONE` on short slots: the default includes
+TIME_LIMIT_90, which on a 2 h job mails every 1.8 h per seed.
 
 ---
 
