@@ -7,12 +7,27 @@
 #     ./submit-campaign.sh --max-priority 5       # ...including the tail
 #     ./submit-campaign.sh --only LG01            # one experiment, by id
 #     ./submit-campaign.sh --only RF02 --reservation _CAP_aigs_hist
+#     ./submit-campaign.sh --only LG01 --qos preempt          # off-reservation
 #
 # --reservation also switches the partition, the QOS and the node constraint,
 # because a reservation's nodes are hbm80g while the batch script asks for
 # hbm40g. Setting only the reservation leaves the job pending on
 # `BadConstraints` indefinitely rather than failing, which is how an RF02 seed
 # spent its first minutes in the reservation doing nothing.
+#
+# --qos and --time are the off-reservation counterparts, and set FME_QOS /
+# FME_TIME, which run-train.sh already turns into sbatch overrides. They are
+# mutually exclusive with --reservation rather than merely losing to it: a
+# reservation appends its own --qos=resv AFTER FME_QOS, so `--reservation X
+# --qos preempt` would silently run in the reservation. Refuse instead.
+#
+# `--qos preempt` is the intended home for this campaign once _CAP_aigs_hist
+# expires 2026-09-09 15:00. Measured 2026-09-07: preempt carries the same slurm
+# priority as regular (67679) against a queue a quarter the depth (1,192 pending
+# vs 4,859), charges 0.25x, and guarantees 2 h before it can be preempted --
+# against a restart that costs ~3 min to first step plus at most one 1,000-batch
+# checkpoint interval (~14 min) of redone work. e3sm_g has 53% of its allocation
+# left, so the discount is not the point; the queue depth is.
 #
 # Priorities are 1..5 and the default cap is 3. P1 is the deterministic
 # reference, which five arms difference against and which therefore has to
@@ -52,12 +67,24 @@ while [ $# -gt 0 ]; do
         --preflight)    PRE=1; shift ;;
         --only)         ONLY="${2:?--only needs an experiment id or run id}"; shift 2 ;;
         --reservation)  export FME_RESERVATION="${2:?--reservation needs a name}"; shift 2 ;;
+        --qos)          export FME_QOS="${2:?--qos needs a name}"; shift 2 ;;
+        --time)         export FME_TIME="${2:?--time needs HH:MM:SS}"; shift 2 ;;
         --max-priority) MAXP="${2:?--max-priority needs a number}"; shift 2 ;;
-        *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N] [--reservation NAME]" >&2
+        *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N]" >&2
+           echo "              [--reservation NAME | --qos NAME] [--time HH:MM:SS]" >&2
            echo "       N is 1..3 for the arms that carry the claims, 4..5 for the tail" >&2
            exit 2 ;;
     esac
 done
+
+# See the --qos note in the header: a reservation appends --qos=resv after
+# FME_QOS, so the combination would run in the reservation while claiming not
+# to. Refuse rather than pick a winner.
+if [ -n "${FME_RESERVATION:-}" ] && [ -n "${FME_QOS:-}" ]; then
+    echo "--reservation and --qos are mutually exclusive:" >&2
+    echo "  a reservation forces --qos=resv, so --qos ${FME_QOS} would be ignored." >&2
+    exit 2
+fi
 
 [ -f "$MANIFEST" ] || {
     echo "no $MANIFEST -- run ./generate-campaign.sh first" >&2; exit 1; }
