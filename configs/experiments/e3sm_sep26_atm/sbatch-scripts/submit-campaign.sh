@@ -7,7 +7,7 @@
 #     ./submit-campaign.sh --max-priority 5       # ...including the tail
 #     ./submit-campaign.sh --only LG01            # one experiment, by id
 #     ./submit-campaign.sh --only RF02 --reservation _CAP_aigs_hist
-#     ./submit-campaign.sh --only LG01 --qos preempt          # off-reservation
+#     ./submit-campaign.sh --only LG01 --qos regular --time 02:00:00
 #
 # --reservation also switches the partition, the QOS and the node constraint,
 # because a reservation's nodes are hbm80g while the batch script asks for
@@ -19,15 +19,19 @@
 # FME_TIME, which run-train.sh already turns into sbatch overrides. They are
 # mutually exclusive with --reservation rather than merely losing to it: a
 # reservation appends its own --qos=resv AFTER FME_QOS, so `--reservation X
-# --qos preempt` would silently run in the reservation. Refuse instead.
+# --qos regular` would silently run in the reservation. Refuse instead.
 #
-# `--qos preempt` is the intended home for this campaign once _CAP_aigs_hist
-# expires 2026-09-09 15:00. Measured 2026-09-07: preempt carries the same slurm
-# priority as regular (67679) against a queue a quarter the depth (1,192 pending
-# vs 4,859), charges 0.25x, and guarantees 2 h before it can be preempted --
-# against a restart that costs ~3 min to first step plus at most one 1,000-batch
-# checkpoint interval (~14 min) of redone work. e3sm_g has 53% of its allocation
-# left, so the discount is not the point; the queue depth is.
+# Off-reservation, the pairing is `--qos regular --time 02:00:00`, and the
+# WALLTIME is what matters, not the QOS. Measured 2026-09-07 over gpu_regular
+# jobs of 3-8 nodes: a <=2 h request waits a median 5.3 h, everything from 2-4 h
+# up waits 33-59 h. Backfill is the only way in (priority is a per-QOS constant
+# plus age; fairshare has weight 0), and backfill only takes short jobs.
+#
+# Do NOT reach for `--qos preempt` on the strength of its shorter pending list.
+# It preempts only debug_preempt/overrun/sparewarmer -- never gpu_regular -- so
+# it buys no position, and it is itself preemptible by gpu_interactive and
+# resv_shared. Same shape, same window: preempt waits a median 39.2 h against
+# regular's 5.5 h. See TODO E1; this campaign lost 4.4 h learning it.
 #
 # Priorities are 1..5 and the default cap is 3. P1 is the deterministic
 # reference, which five arms difference against and which therefore has to

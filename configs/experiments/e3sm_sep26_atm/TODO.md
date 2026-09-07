@@ -509,82 +509,102 @@ placeholder for it, `maintenance_20260916`, 7 days wide over all 5,248 nodes, so
 nothing that cannot finish by 09-16 06:00 will start. `sbatch --test-only` for a
 fresh 4-node 12 h regular job answers "to start at 2026-09-18T22:50".
 
-**Walltime, not QOS, is the lever, and it is a cliff at 2 h.** GPU jobs of 2–16
-nodes in `gpu_regular`/`gpu_preempt`, submitted *and* started 09-04 → 09-07 (so
-no stale submissions inflating the wait):
+**Walltime is the lever and QOS is a trap, and the first version of this
+section got the second half wrong.** Both corrections below cost a day of queue,
+so they are written out rather than silently fixed.
+
+*The cliff at 2 h is real.* `gpu_regular` only (the earlier table pooled
+`gpu_regular` with `gpu_preempt`, which is exactly the mistake), 3-8 nodes,
+started since 08-31:
 
 ```
-tlimit     n    med wait   p90
-  <=1h   289      1.6 h    7.9 h
-  1-2h    52      3.0 h   12.9 h
-  2-3h    41     10.7 h   64.4 h
-  3-4h    22     26.1 h   39.3 h
-  4-6h    14     35.8 h   54.1 h
- 6-12h    17     38.9 h   50.8 h
-  >12h    25     40.0 h   46.5 h
+tlimit      n     med      p75      p90
+  <=2h    520    5.3 h   18.3 h   69.2 h
+  2-4h    387   32.8 h   95.8 h  166.2 h
+  4-6h     31   40.3 h   53.4 h  211.6 h
+  6-8h      9   48.4 h   61.8 h  155.9 h
+ 8-12h     50   50.8 h   55.6 h   84.3 h
+12-16h      7   56.1 h  111.7 h  123.3 h
+  >16h     97   59.2 h   91.1 h  142.5 h
 ```
 
-Past 2 h the wait climbs to a ~40 h plateau and **12 h is no worse than 6 h and
-no better than 48 h** — the choice inside that range is not a choice. Below 2 h,
-backfill takes the job almost immediately.
+The choice is binary: **<=2 h, or roughly two days of queue**. There is no sweet
+spot at 4 or 6 h -- 2-4 h is already 32.8 h.
 
-Why us in particular: `sshare` gives mahf708 in e3sm_g **FairShare 0.0072**, with
-EffectvUsage 0.206 against NormShares 0.0029 — roughly 70× over share, mostly
-from this campaign. Priority scheduling will not favour us; **backfill is the
-only realistic path in, and backfill only takes short jobs**.
+*`gpu_preempt` is not a fast lane, and taking it cost us 4.4 h.* Its preemption
+relationship is `Preempt = debug_preempt, overrun, sparewarmer` -- it **cannot**
+displace `gpu_regular`, which is effectively the whole machine, and it is itself
+preemptible by `gpu_interactive` and `resv_shared`. The QOS means "your job is
+killable, for 0.25x charge"; it buys no scheduling position at all. Same shape
+(3-8 nodes, <=2 h), started since 09-01:
 
-`preempt` vs `regular`: preempt has a quarter the queue depth (1,192 pending
-against 4,859) at the same slurm priority (67679), but that does **not** convert
-into a shorter wait — over 09-05 → 09-07, median 50.4 h against regular's 35.1 h
-for 2–16 node jobs, better only in the tail (p90 85.7 h against 106.7 h). Take
-preempt for its **0.25× charge and its 2 h preemption guarantee**, not for speed.
-Preemption itself is barely happening: of ~299 preempt jobs that terminated
-since 09-05, **4 were PREEMPTED (1.3%)**.
+```
+gpu_regular   n=403   med  5.5 h   p75 31.5 h   p90 75.6 h
+gpu_preempt   n= 29   med 39.2 h   p75 51.3 h   p90 85.6 h
+```
 
-Which gives the off-reservation recipe: **`--qos preempt --time 02:00:00`**. A
-2 h request sits under the backfill cliff *and* at exactly the preemption
-guarantee, so it is effectively unpreemptable. Cost of chaining 2 h slots,
-measured rather than assumed: ~3 min to first training step after a restart, and
-at most one 1,000-batch checkpoint interval (~14 min, verified from the
-84000/85000/86000 timestamps) of redone work — call it 10 min, **~8% of a 2 h
-slot**. Against a median 3.0 h wait that is a 37% duty cycle, versus 23% for
-12 h slots. Reaching epoch 10 (21 h of compute) costs ~57 h of wall clock at 2 h
-against ~100 h at 12 h.
+Seven times worse, and the corroboration is exact: in one 6 h window on 09-07,
+four `gpu_preempt` jobs at **4 nodes, tl=02:00:00** -- our shape precisely --
+started after waits of 85.5, 85.6, 85.7 and 86.0 h. The shorter pending list
+(1,192 against 4,859) was never evidence of anything.
 
-Two things this does not settle:
+**The off-reservation recipe is therefore `--qos regular --time 02:00:00`.**
+Charge goes 0.25x -> 1x, which is irrelevant against 366,757 node-hours: we were
+buying a discount we did not need with queue position we did.
 
-* A **requeued** job keeps its original submit time, so its age priority is
-  preserved and may restart far faster than a fresh submission. If so, long
-  slots recover most of the gap. Nothing in our history measures this — every
-  requeue we have ever done was inside a reservation, where the wait is ~0.1 min.
-  Settle it by running one seed at 2 h and one at 12 h and comparing duty cycle.
-* An inference epoch costs 17–57 min on top of the ~1.94 h training epoch
-  (8178 s at epoch 9 and 8091 s at epoch 3 against 6916–7158 s for a plain one),
-  and inference is **not** checkpointed internally. A 2 h slot still clears it,
-  because a restart resumes near the epoch end and then has the whole slot for
-  inference — but 2 h is the floor for this workload, not a value to shave.
+*Fairshare is not why we wait.* `PriorityWeightFairShare = 0` on this cluster --
+fairshare does not enter the priority formula, so the earlier "we are 70x over
+share" explanation was wrong even though the `sshare` number was right. Priority
+is `PriorityWeightQOS` (a per-QOS constant, 67679 for both regular and preempt)
+plus `PriorityWeightAge` (184320 spread over `PriorityMaxAge` 128 days = **1440
+points/day**). `sprio` on a fresh submission returns 67679 with AGE 0,
+FAIRSHARE 0, PARTITION 0.
+
+`bf_min_prio_reserve = 69121` is the threshold above which backfill *reserves*
+future resources rather than only filling holes opportunistically -- 1,442 age
+points, i.e. **exactly 24 h of queue age**. Jobs with a published start estimate
+have median priority 69132 and 52% sit above it; jobs without have median 68676
+and 3% do. But short jobs do not need to cross it: the <=2 h median of 5.3 h is
+opportunistic backfill, not reservation.
+
+**The age clock resets, twice over.** `scontrol requeue` (what the walltime trap
+calls) rewrites `SubmitTime` and `EligibleTime` to the requeue moment --
+verified on RF02 57986013, `Restarts=2`, `SubmitTime` = the requeue. And
+`scontrol update JobId=... QOS=...` resets AGE to 0 while *preserving*
+`SubmitTime`, which is how the LG flip cost 264 accrued points. Neither matters
+much given that short jobs get in by hole-filling, but nothing here accumulates
+priority across a chain.
+
+*Cost of chaining 2 h slots*, measured: a walltime requeue is graceful -- USR1 at
+T-300 s, `scancel --signal=TERM`, FME tears down the collectives and writes a
+restart checkpoint, then `scontrol requeue`. So a slot costs the 5 min signal
+lead plus ~3 min to first training step, **~7%**. The ~14 min of redone work (one
+1,000-batch checkpoint interval, from the 84000/85000/86000 timestamps) applies
+only to an ungraceful kill. Against a 5.3 h median wait:
+
+```
+             wait + run    useful   duty    to epoch 10 (21 h compute)
+   2 h        5.3 + 2.0    1.87 h    26%      ~82 h  (3.4 days)
+  13 h       56.1 + 13     12.9 h    19%     ~133 h  (5.5 days)
+```
+
+2 h also has the lower variance on the total, averaging 11 draws against 2.
+
+`TimeLimit` cannot be raised in place -- only operators may increase it -- so
+moving to a longer slot means cancel-and-resubmit at the bottom of a 10x worse
+bucket. QOS *can* be changed in place.
+
+The one real argument for a longer slot: **inference is not checkpointed
+internally**. It costs 17-57 min on top of the ~1.94 h training epoch (8178 s at
+epoch 9, 8091 s at epoch 3, against 6916-7158 s for a plain one), and the 57 min
+case was during the 09-06 system slowdown. If contention ever pushed inference
+past ~1.9 h, a 2 h slot could never finish that epoch: restart, retrain to the
+boundary, start inference, die, forever. It is detectable -- the same epoch
+retried with no checkpoint advance -- and the fix is to move that one run to a
+longer slot. This is why 2 h is the floor here rather than a value to shave.
 
 Also set `FME_MAIL_TYPE=NONE` on short slots: the default includes
 TIME_LIMIT_90, which on a 2 h job mails every 1.8 h per seed.
-
-**Confirmed at submission** (LG01-LG03, 9 seeds, `--qos preempt --time
-02:00:00`, 2026-09-07): `sprio` on job 58031749 returns PRIORITY 67679 with
-**AGE 0, FAIRSHARE 0, PARTITION 0** -- the whole number is the QOS constant, so
-every job in `gpu_preempt` carries exactly the same priority and ours beats 6%
-of the 11,094 pending jobs. Priority scheduling gives us nothing whatsoever;
-**backfill is the entire mechanism**, which is the argument for 2 h restated as
-a measurement rather than a projection.
-
-One correction to the cost model above, from reading the trap in
-`sbatch-train-atm.sh`: a *walltime* requeue is graceful. USR1 at T-300 s ->
-`scancel --signal=TERM` -> FME's handler tears down the collectives and writes
-a restart checkpoint -> `scontrol requeue`, which **keeps the job id and the
-original submit time**. So a walltime exit costs the 5 min signal lead plus
-~3 min of startup, not a redone checkpoint interval -- ~7% of a 2 h slot. The
-~14 min of redone work applies only to an ungraceful kill, i.e. a real
-preemption, which is 1.3% of preempt jobs. It also means the requeue keeps
-whatever age priority the job has accrued, so the open question above is
-half-answered in the direction that favours chaining.
 
 ---
 
