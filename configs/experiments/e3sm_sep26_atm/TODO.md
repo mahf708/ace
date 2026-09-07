@@ -555,6 +555,25 @@ Two things this does not settle:
 Also set `FME_MAIL_TYPE=NONE` on short slots: the default includes
 TIME_LIMIT_90, which on a 2 h job mails every 1.8 h per seed.
 
+**Confirmed at submission** (LG01-LG03, 9 seeds, `--qos preempt --time
+02:00:00`, 2026-09-07): `sprio` on job 58031749 returns PRIORITY 67679 with
+**AGE 0, FAIRSHARE 0, PARTITION 0** -- the whole number is the QOS constant, so
+every job in `gpu_preempt` carries exactly the same priority and ours beats 6%
+of the 11,094 pending jobs. Priority scheduling gives us nothing whatsoever;
+**backfill is the entire mechanism**, which is the argument for 2 h restated as
+a measurement rather than a projection.
+
+One correction to the cost model above, from reading the trap in
+`sbatch-train-atm.sh`: a *walltime* requeue is graceful. USR1 at T-300 s ->
+`scancel --signal=TERM` -> FME's handler tears down the collectives and writes
+a restart checkpoint -> `scontrol requeue`, which **keeps the job id and the
+original submit time**. So a walltime exit costs the 5 min signal lead plus
+~3 min of startup, not a redone checkpoint interval -- ~7% of a 2 h slot. The
+~14 min of redone work applies only to an ungraceful kill, i.e. a real
+preemption, which is 1.3% of preempt jobs. It also means the requeue keeps
+whatever age priority the job has accrued, so the open question above is
+half-answered in the direction that favours chaining.
+
 ---
 
 ## Not a TODO
