@@ -15,7 +15,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/7d3b3msf",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "d3neyfbv",
@@ -33,7 +34,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/d3neyfbv",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "2i9u0zsn",
@@ -51,7 +53,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/2i9u0zsn",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "7hqlndfe",
@@ -69,7 +72,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/7hqlndfe",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "36tzjx7o",
@@ -87,7 +91,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/36tzjx7o",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise half"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise half",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "eq3s3630",
@@ -105,7 +110,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/eq3s3630",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "h0shm3wf",
@@ -123,7 +129,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/h0shm3wf",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "mexldq99",
@@ -141,7 +148,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/mexldq99",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "8b1u5k31",
@@ -159,7 +167,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/8b1u5k31",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise half"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise half",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "l5erlr64",
@@ -177,7 +186,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/l5erlr64",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "ollomb3x",
@@ -195,7 +205,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/ollomb3x",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise off"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise off",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "km85lryp",
@@ -213,7 +224,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/km85lryp",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise fixed"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise fixed",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "7nlymq1k",
@@ -231,7 +243,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/7nlymq1k",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise half"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise half",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "fhe5zbpk",
@@ -249,7 +262,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/fhe5zbpk",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "pc1isnn1",
@@ -267,7 +281,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/pc1isnn1",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "8646fon7",
@@ -285,7 +300,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/8646fon7",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise double"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise double",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "s8w8t4zq",
@@ -303,7 +319,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/s8w8t4zq",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise half"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise half",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "55m3dqub",
@@ -321,7 +338,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/55m3dqub",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise half"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise half",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "odeq91kl",
@@ -339,7 +357,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/odeq91kl",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise fixed"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise fixed",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "lqv17kb3",
@@ -357,7 +376,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/lqv17kb3",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise double"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise double",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "tr0ntaf2",
@@ -375,7 +395,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/tr0ntaf2",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise double"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise double",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "yw5wdgh9",
@@ -393,7 +414,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/yw5wdgh9",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "l6dvplop",
@@ -411,7 +433,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/l6dvplop",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "yz7bi3yp",
@@ -429,7 +452,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/yz7bi3yp",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "1ad3oqie",
@@ -447,7 +471,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/1ad3oqie",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "zug87ou0",
@@ -465,7 +490,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/zug87ou0",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "7ml5fzyv",
@@ -483,7 +509,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/7ml5fzyv",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "58sm5kc0",
@@ -501,7 +528,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/58sm5kc0",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "n6z60afi",
@@ -519,7 +547,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/n6z60afi",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "nwpx6yv6",
@@ -537,7 +566,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/nwpx6yv6",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S03, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "rflrl6cn",
@@ -555,7 +585,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/rflrl6cn",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "kamc0iog",
@@ -573,7 +604,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/kamc0iog",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "dc4xthfv",
@@ -591,7 +623,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/dc4xthfv",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "scpdj86u",
@@ -609,7 +642,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/scpdj86u",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "xf8hxkjv",
@@ -627,7 +661,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/xf8hxkjv",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "z5sjope2",
@@ -645,7 +680,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/z5sjope2",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "fpz0v7ee",
@@ -663,7 +699,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/fpz0v7ee",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "yw4907cf",
@@ -681,7 +718,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/yw4907cf",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "m4e832te",
@@ -699,7 +737,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/m4e832te",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "7mkp8f23",
@@ -717,7 +756,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/7mkp8f23",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S01, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "5dzrg8ha",
@@ -735,7 +775,8 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/5dzrg8ha",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
   },
   {
     "id": "yvz1do8h",
@@ -753,6 +794,124 @@
       "sep26"
     ],
     "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/yvz1do8h",
-    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep"
+    "notes": "offline scores pass for E01.aug26.atm.A0_B16_C0_L0_O5_W0_X0.S02, noise keep",
+    "batch": "eval-scores sweep 2026-09-06"
+  },
+  {
+    "id": "rmxugox4",
+    "name": "lively-firefly-1",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:11:06Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/rmxugox4",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/lg04",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "z96quzwi",
+    "name": "solar-water-2",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:11:07Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/z96quzwi",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/lg04",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "70bipkrf",
+    "name": "flowing-voice-3",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:11:07Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/70bipkrf",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/lg04",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "lhxf8roj",
+    "name": "atomic-bee-4",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:11:07Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/lhxf8roj",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/lg04",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "sv0cvhgs",
+    "name": "morning-bird-5",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:29:05Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/sv0cvhgs",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/rf02-parent",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "64cks6ez",
+    "name": "sunny-tree-6",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:35:48Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/64cks6ez",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/cu01",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "g9zo3tgg",
+    "name": "whole-tree-7",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:45:56Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/g9zo3tgg",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/g2-pure-energy",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "05157nrd",
+    "name": "grateful-bush-8",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:46:07Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/05157nrd",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/m3-energy",
+    "batch": "campaign smoke tests 2026-09-04"
+  },
+  {
+    "id": "8ghpaugu",
+    "name": "cerulean-waterfall-9",
+    "job_type": null,
+    "group": null,
+    "state": "crashed",
+    "created_at": "2026-09-04T03:46:52Z",
+    "tags": [],
+    "url": "https://wandb.ai/e3sm-aig/ACE2S-sep26-atm/runs/8ghpaugu",
+    "notes": null,
+    "experiment_dir": "/pscratch/sd/m/mahf708/sep26-smoke/cu01-verify",
+    "batch": "campaign smoke tests 2026-09-04"
   }
 ]
