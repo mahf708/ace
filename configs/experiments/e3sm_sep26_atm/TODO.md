@@ -379,14 +379,16 @@ epochs 3, 6 and 9, while its validation loss spans 0.8% or less at every epoch
 monotonically throughout. Both poles therefore show the same thing: the metric
 that selects checkpoints cannot see what the climate metric sees.
 
-RF02's knee is EARLIER than RF01's, which the fixed-epoch rule has to carry.
-RF01 gains 40% from epoch 3 to 6 and is only +12% above its best by 9; RF02 is
-flat from 3 to 6 (0.0737 -> 0.0739) and +62% by 9. Scoring both at epoch 10 is
-therefore not neutral between them -- it is further past RF02's knee than
-RF01's. Keep the fixed epoch anyway (scoring each arm at its own best
-inference epoch is selection on the reported metric), but report the pole
-difference at epoch 10 AND at each pole's own best, and say so. Here it
-survives both -- see C7.
+RF02 has no visible knee yet, which is itself the problem for a fixed epoch.
+RF01 gains 40% from epoch 3 to 6, is +12% above its best by 9 and has clearly
+turned by 12. RF02 through epoch 12 is flat-and-noisy -- 0.0737, 0.0739, 0.1195,
+0.0775 -- with a single-epoch excursion at 9 that epoch 12 undoes. So epoch 10
+lands for RF02 in a region where the epoch-to-epoch scatter is as large as
+anything being measured, while for RF01 it sits just inside a real basin. Keep
+the fixed epoch anyway (scoring each arm at its own best inference epoch is
+selection on the reported metric), but report the pole difference at epoch 10
+AND at each pole's own best, and say so. Only the best-vs-best form survives
+epoch 12 -- see C7.
 
 Regenerate either table with `analysis/inference_error_trajectory.py`.
 
@@ -407,6 +409,7 @@ epoch   RF01 (D0 M2 Z1, stochastic)   RF02 (D1 M1 Z0, deterministic)
     3   0.0587  0.0835  0.1088 0.0836  0.0833  0.0773  0.0606 0.0737  0.88
     6   0.0547  0.0435  0.0518 0.0500  0.0862  0.0731  0.0625 0.0739  1.48
     9   0.0611  0.0641  0.0422 0.0558  0.1660  0.1153  0.0772 0.1195  2.14
+   12   0.0450  0.0856  0.1347 0.0884    --    0.0796  0.0753 0.0775  0.88
 ```
 
 At epoch 3 the two poles interleave -- no signal. At epochs 6 and 9 the three
@@ -415,8 +418,17 @@ RF01 seeds are **all** below the three RF02 seeds with no overlap (0.0547 <
 a stated direction has probability 1/C(6,3) = 0.05 exactly. The two epochs are
 the same six runs, so that is one p = 0.05, not two.
 
-The same holds seed-by-seed against each seed's own best epoch, which is the
-comparison the differing knees cannot distort: RF01 {0.0450, 0.0435, 0.0422}
+**Epoch 12 breaks the separation, and it is the row that keeps this honest.**
+RF02's epoch-9 jump was largely an excursion: S02 goes 0.1153 -> 0.0796 and S03
+0.0772 -> 0.0753, while RF01 hits its own knee and spreads 102%. At epoch 12 the
+two poles interleave again and the ratio is back to 0.88. So the epoch-by-epoch
+separation is **not** a stable ordering, and "RF02's knee is earlier, it
+degrades faster" -- read off epoch 9 alone when it was the last row available --
+is not supported. RF02's trajectory is *noisy*, not collapsing: 0.0737, 0.0739,
+0.1195, 0.0775 on the mean.
+
+The seed-by-seed comparison against each seed's own best epoch is the form that
+**does** survive epoch 12 (nothing at 12 beat any RF02 seed's earlier best): RF01 {0.0450, 0.0435, 0.0422}
 against RF02 {0.0833, 0.0731, 0.0606}. RF01's **worst** seed beats RF02's best
 by 26%; the means differ by 1.5x.
 
