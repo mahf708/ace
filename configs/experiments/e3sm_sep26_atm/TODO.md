@@ -30,10 +30,21 @@ no-op, so the weights were compared directly
 Two orders of magnitude between "loaded" and "not loaded", so this is not a
 judgement call. Every arm in the run list is now smoke-verified.
 
-### A1. RF02 has to run before anything can be read
+### A1. RF02 has to run — SCOREABLE 2026-09-07, still running to 30
 Five arms difference against the deterministic pole. It is P1 and it is 567
-node-hours (3 seeds × 189). Nothing in LG or RO03 means anything until it
-finishes. **This is the schedule's first item.**
+node-hours (3 seeds × 189).
+
+All three seeds passed **epoch 10, the C2 scoring epoch, on 2026-09-07** and
+are in epoch 11 with `ema_ckpt_0010.tar` on disk. LG and RO03 are no longer
+blocked on RF02 *finishing* — they are unblocked now, at the epoch anything
+gets scored at. Epochs 11–30 remain useful for the trajectory (C7) and for the
+FLOP-matched read in D3, not for scoring.
+
+At ~2.08 h/epoch (measured: 6.9–7.2 ks for a plain epoch, 8.1–10.5 ks when the
+5-year inference runs every third one), a seed reaches epoch 10 in ~21 h on 4
+nodes — 84 node-hours, not 189. **An arm becomes scoreable in a third of the
+node-hours its full run costs**, which is what makes anything at all possible
+before the reservation ends 2026-09-09 15:00.
 
 ### A2. Per-channel loss plots from any `D0` run are wrong
 Not a crash. E01's *total* loss is correct; the energy term's contribution to
@@ -361,16 +372,81 @@ move it, and it means **epoch 10 sits inside the basin but nearer its edge the
 longer the rollout being claimed**. Label the rollout length on a climate
 number the way C2 already asks for the epoch.
 
-The deterministic pole reproduces the measurement problem at its first
-inference epoch: RF02 at epoch 3 is 0.0833 / 0.0773 / 0.0606 across seeds, a
-31% spread, while its validation loss at epoch 4 spans 0.8% (0.11435-0.11525).
-Same ordering on both metrics, which with three seeds is a one-in-six
-coincidence and not yet evidence of anything.
+The deterministic pole reproduces the measurement problem, and now over three
+inference epochs. RF02's 5-year error spreads 31%, 32% and 74% across seeds at
+epochs 3, 6 and 9, while its validation loss spans 0.8% or less at every epoch
+(0.11435-0.11525 at epoch 4, 0.07434-0.07486 at epoch 10) and falls
+monotonically throughout. Both poles therefore show the same thing: the metric
+that selects checkpoints cannot see what the climate metric sees.
+
+RF02's knee is EARLIER than RF01's, which the fixed-epoch rule has to carry.
+RF01 gains 40% from epoch 3 to 6 and is only +12% above its best by 9; RF02 is
+flat from 3 to 6 (0.0737 -> 0.0739) and +62% by 9. Scoring both at epoch 10 is
+therefore not neutral between them -- it is further past RF02's knee than
+RF01's. Keep the fixed epoch anyway (scoring each arm at its own best
+inference epoch is selection on the reported metric), but report the pole
+difference at epoch 10 AND at each pole's own best, and say so. Here it
+survives both -- see C7.
 
 Regenerate either table with `analysis/inference_error_trajectory.py`.
 
 A side benefit: epoch 10 is a third of a 30-epoch run, so an arm becomes
 scoreable long before it finishes.
+
+### C7. The pole gap is measured, and LG is exactly what decomposes it
+
+RF02 has passed the scoring epoch on all three seeds (`ema_ckpt_0010.tar` on
+disk for S01/S02/S03, 2026-09-07). Its in-training 5-year rollout error, beside
+RF01's at the same epochs and under a **byte-identical inference block** -- same
+7300 forward steps, same 16 ICs, same reference run, the only difference being
+the CFS-vs-Lustre path to the same staged data:
+
+```
+epoch   RF01 (D0 M2 Z1, stochastic)   RF02 (D1 M1 Z0, deterministic)
+        S01     S02     S03    mean   S01     S02     S03    mean   ratio
+    3   0.0587  0.0835  0.1088 0.0836  0.0833  0.0773  0.0606 0.0737  0.88
+    6   0.0547  0.0435  0.0518 0.0500  0.0862  0.0731  0.0625 0.0739  1.48
+    9   0.0611  0.0641  0.0422 0.0558  0.1660  0.1153  0.0772 0.1195  2.14
+```
+
+At epoch 3 the two poles interleave -- no signal. At epochs 6 and 9 the three
+RF01 seeds are **all** below the three RF02 seeds with no overlap (0.0547 <
+0.0625; 0.0641 < 0.0772). Under the null, complete separation of 3 against 3 in
+a stated direction has probability 1/C(6,3) = 0.05 exactly. The two epochs are
+the same six runs, so that is one p = 0.05, not two.
+
+The same holds seed-by-seed against each seed's own best epoch, which is the
+comparison the differing knees cannot distort: RF01 {0.0450, 0.0435, 0.0422}
+against RF02 {0.0833, 0.0731, 0.0606}. RF01's **worst** seed beats RF02's best
+by 26%; the means differ by 1.5x.
+
+Three caveats, none of which the data can retire yet:
+
+* RF02 has three inference points against RF01's ten, so its best is the more
+  undersampled of the two and could sit between the sampled epochs.
+* `time_mean_norm/rmse/channel_mean` is the 5-year **time-mean** error. It is a
+  climate-bias metric and says nothing about variability or extremes.
+* D, M and Z co-vary between the poles (EnsembleLoss/2 members/32 noise dims
+  against MSE/1 member/none). That is one design choice with three config
+  consequences rather than three confounders -- but it does mean the gap is not
+  yet attributable to any one of them.
+
+Which is what **LG01, LG02 and LG03 are for**, and they are the only 3-seed
+arms in the campaign besides RF02 -- the seed count this comparison needs:
+
+```
+RF01   D0 G0 M2 Z1   ensemble loss, 2 members, noise      pole
+LG04   D0 G0 M2 Z0   same loss and members, NO noise      1 seed
+LG02   D0 G1 M1 Z1   CRPS only, 1 member, noise           3 seeds
+LG01   D0 G1 M1 Z0   CRPS only, 1 member, no noise        3 seeds
+LG03   D1 G0 M1 Z1   MSE, 1 member, WITH noise            3 seeds
+RF02   D1 G0 M1 Z0   MSE, 1 member, no noise              pole
+```
+
+LG03 minus RF02 isolates the noise input under MSE; LG01 minus RF02 isolates
+the proper scoring rule with everything else held at the deterministic setting.
+That is the decomposition of the gap above, and it is the argument for running
+LG first when capacity frees.
 
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until

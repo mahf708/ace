@@ -94,6 +94,11 @@ third witness behind C2's `SCORING_EPOCH = 10`: on RF01's three seeds the
 whole way. `best_ckpt.tar` is therefore close to the worst checkpoint on disk
 for climate, and the knee moves earlier the longer the rollout being scored.
 
+The same tool on RF02 gives the deterministic pole's trajectory, and the two
+side by side are the pole comparison in TODO §C7: identical inference block, so
+the numbers are comparable, and at epochs 6 and 9 the three RF01 seeds fall
+entirely below the three RF02 seeds.
+
 ## Filesystem
 
 `stall_rate.py` — what fraction of a run's wall clock went to stalls rather
