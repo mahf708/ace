@@ -323,6 +323,52 @@ without removing it. For weather claims, score a second time at the converged
 end and label which epoch a number came from -- both epochs for 16 arms at 3
 seeds is ~60 node-hours against a 6,230 budget.
 
+**A third witness, on all three seeds, for free.** Every run already logs
+`Inference error:` for the 5-year rollout at epochs 3, 6, 9, ... The C2 sweep
+above is offline, two seeds, 1 d and 1 y; this is in-training, three seeds,
+5 y, and it agrees on the shape.
+
+| epoch | S01 | S02 | S03 | mean | seed spread |
+|---|---|---|---|---|---|
+| 3 | 0.0587 | 0.0835 | 0.1088 | 0.0836 | 60% |
+| 6 | 0.0547 | 0.0435 | 0.0518 | **0.0500** | **22%** |
+| 9 | 0.0611 | 0.0641 | 0.0422 | 0.0558 | 39% |
+| 12 | 0.0450 | 0.0856 | 0.1347 | 0.0884 | 102% |
+| 15 | 0.0521 | 0.1444 | 0.2239 | 0.1401 | 123% |
+| 18 | 0.1138 | 0.3561 | 0.2270 | 0.2323 | 104% |
+| 21 | 0.3736 | 0.3894 | 0.3527 | 0.3719 | 10% |
+| 24 | 0.5165 | 0.3065 | 0.2879 | 0.3703 | 62% |
+| 27 | 0.5197 | 0.3341 | 0.3331 | 0.3956 | 47% |
+| 30 | -- | 0.3229 | 0.3220 | 0.3225 | 0% |
+
+Read the spread column with the mean beside it. Epoch 21 is tight at 10% not
+because the seeds agree usefully but because all three have converged to the
+same bad place; the only row that is both low and tight is 6.
+
+Validation loss over the same 30 epochs falls monotonically on all three seeds
+(0.2099 -> 0.0925, seeds within 0.5% of each other at every single epoch). The
+two metrics are therefore anti-correlated from about epoch 9 on, and
+`best_ckpt.tar` -- selected on validation loss -- is a 6-10x worse climate model
+than the epoch-6 checkpoint sitting next to it on disk. That is the C2 claim,
+now with the curve behind it rather than two endpoints.
+
+Two things this adds. S03 was not in the sweep, and its knee falls at 12 with
+S02's rather than at 15 with S01's, so epoch 10 survives a third seed and epoch
+14 is unsafe on two of three. And the 5-year knee is earlier than the 1-year
+one: epoch 12 is already +77% over the epoch-6 mean here, against +5.7% and
++31.2% at epoch 14 in the sweep. That is the direction a longer rollout should
+move it, and it means **epoch 10 sits inside the basin but nearer its edge the
+longer the rollout being claimed**. Label the rollout length on a climate
+number the way C2 already asks for the epoch.
+
+The deterministic pole reproduces the measurement problem at its first
+inference epoch: RF02 at epoch 3 is 0.0833 / 0.0773 / 0.0606 across seeds, a
+31% spread, while its validation loss at epoch 4 spans 0.8% (0.11435-0.11525).
+Same ordering on both metrics, which with three seeds is a one-in-six
+coincidence and not yet evidence of anything.
+
+Regenerate either table with `analysis/inference_error_trajectory.py`.
+
 A side benefit: epoch 10 is a third of a 30-epoch run, so an arm becomes
 scoreable long before it finishes.
 

@@ -84,6 +84,16 @@ writing a config with the placeholder still in it.
 `noise_amplitude.py` takes a `training_checkpoints/` directory. The others
 are single-process and need no arguments.
 
+## Checkpoint selection
+
+`inference_error_trajectory.py` — the trainer's own `Inference error:` line,
+per epoch and across seeds, from logs every run already writes. It is the
+third witness behind C2's `SCORING_EPOCH = 10`: on RF01's three seeds the
+5-year rollout error bottoms at epoch 6 (0.0500, seeds within 22%) and is
+6–10× worse by epoch 21–30, while validation loss falls monotonically the
+whole way. `best_ckpt.tar` is therefore close to the worst checkpoint on disk
+for climate, and the knee moves earlier the longer the rollout being scored.
+
 ## Filesystem
 
 `stall_rate.py` — what fraction of a run's wall clock went to stalls rather
