@@ -432,28 +432,26 @@ epoch    RF01 mean   RF02 mean    RF02 seeds
     9      0.0558      0.1195     0.1660  0.1153  0.0772
    12      0.0884      0.1071     0.1664  0.0796  0.0753
    15      0.1401      0.0818     0.0895  0.0872  0.0686
-   18      0.2323      0.0402       --    0.0361  0.0442   <- RF02 best, 20% spread
-   21      0.3719
+   18      0.2323      0.0477     0.0629  0.0361  0.0442
+   21      0.3719      0.0534     0.0716  0.0285  0.0602
    30      0.3872
 ```
 
-RF02 bottoms at **epoch 18**, not 3-6, and bottoms *lower than RF01 ever gets*:
-S02's 0.0361 beats every one of RF01's per-seed bests {0.0450, 0.0435, 0.0422}.
-Epoch 18 is also RF02's tightest row (20%), so this is signal, not scatter. At
-epoch 18 seed-matched, RF02 S02 is **10x** better than RF01 S02 (0.0361 against
-0.3561) and S03 **5x** better (0.0442 against 0.2270).
+(The epoch-18 row was first recorded at mean 0.0402 from two seeds; S01's 0.0629
+raises it to 0.0477. Third time an incomplete row moved on completion.)
 
-The seed-best comparison -- the one form that had survived three revisions --
-therefore breaks too. RF02's bests are now {0.0833, 0.0361, 0.0442} against
-RF01's {0.0450, 0.0435, 0.0422}: interleaved, no separation. Everything claimed
-here on 09-07 about a stochastic-pole advantage came from reading epochs 6-9,
-where RF01 sits in its basin and RF02 is still 9-12 epochs from reaching its
-own. **The claim is withdrawn, not weakened.**
+RF02 descends to a plateau at **epochs 18-21**, mean 0.048-0.053, and stays
+there. Per-seed bests are RF02 {0.0629, 0.0285, 0.0442} against RF01 {0.0450,
+0.0435, 0.0422} -- **interleaved, no separation**, which confirms the withdrawal
+rather than merely leaving it standing. S02 alone reaches 0.0285 at epoch 21,
+below anything RF01 records, but S01 never gets below 0.0629, so that is a seed
+statement and not a pole statement.
 
-What is left is a real and much sharper result: **the two poles have optima nine
-epochs apart** -- RF01 at 6, RF02 at 18 -- and RF01 falls out of its basin by 7x
-while RF02 does not. Any comparison at a shared fixed epoch measures the gap
-between the arms' *schedules*, not between the objectives.
+What is left is a real and much sharper result, and it is about **stability, not
+peak skill**: the two poles reach comparable minima (RF01 0.0500 at epoch 6,
+RF02 0.0477 at 18) but RF01 then falls out of its basin by 7x while RF02 holds.
+Their optima are twelve epochs apart, so any comparison at a shared fixed epoch
+measures the gap between the arms' *schedules*, not between the objectives.
 
 ### C2 is not safe, and this is the finding that breaks it
 
