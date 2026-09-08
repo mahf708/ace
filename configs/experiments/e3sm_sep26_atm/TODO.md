@@ -501,6 +501,49 @@ the proper scoring rule with everything else held at the deterministic setting.
 That is the decomposition of the gap above, and it is the argument for running
 LG first when capacity frees.
 
+### C8. Test F -- is RF01's collapse the optimum, or the EMA window?
+
+QUEUED 2026-09-08, jobs 58086627/28/44 and 58086645/46/47, 4 nodes each at
+`-q regular -t 02:00:00` (under the backfill cliff; see E1). At most 48
+node-hours, no retraining.
+
+**Why.** `ema.decay: 0.999`, one update per batch, 8,217 batches per epoch = a
+window of 1,000 updates, **0.12 of an epoch** and ten times shorter than fme's
+default of 0.9999 which the template overrode. C2 measured raw against averaged
+weights differing 2.4x at epoch 22, so that short window is doing a great deal
+of work. RF01's 8x degradation after epoch 9 is therefore either the optimum
+being passed or an averaging window too short to suppress late-training iterate
+noise, and the two are not distinguishable from anything measured so far.
+
+**How.** `analysis/swa_checkpoint.py` averages `ema_ckpt_NNNN.tar` over a
+k-epoch window -- plain SWA, and legitimate because those files already hold
+folded weights. Scored on the held-out `5yr_test` ICs (2040-2047, 7300 steps),
+so the result is directly comparable to `heldout_error_trajectory.py`.
+
+**Predictions, written before the result, and what each one means.** RF01's
+single-epoch held-out values bracket both windows:
+
+```
+window        centred near   single-epoch held-out there   SWA result means
+swa15-21      epoch 18       0.3382 (18), 0.3673 (21)      see below
+swa3-9        epoch  6       0.0681  (6), 0.0571  (9)      control
+```
+
+* `swa15-21` **<= 0.10** -- the collapse is largely an EMA-window artefact. C is
+  then a workaround for a hyperparameter, not a finding; the scoring rule has to
+  be re-derived on longer-averaged weights and `ema.decay` becomes an axis.
+* `swa15-21` **>= 0.25** -- the collapse is real optimisation behaviour. **Adopt
+  C** (per-arm epoch on the `inference` block, reported on `5yr_test`), which is
+  the standing decision if this branch holds.
+* Between the two -- partial. Report both numbers and adopt C with the window
+  named as a caveat.
+* `swa3-9` is the control and should land near 0.06. If averaging across epochs
+  hurts *inside* the basin, the comparison is confounded and neither branch
+  above can be read.
+
+Three seeds per window, because the collapse is seed-varying (0.2884 / 0.3876 /
+0.4261 at epoch 21) and a one-seed answer would not separate the hypotheses.
+
 ### D2. Offline metrics
 Return periods (GEV by L-moments; **do not quote a 50-year level** until
 effective sample size is estimated), relative economic value, MJO.
