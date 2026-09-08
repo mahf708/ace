@@ -409,7 +409,11 @@ epoch   RF01 (D0 M2 Z1, stochastic)   RF02 (D1 M1 Z0, deterministic)
     3   0.0587  0.0835  0.1088 0.0836  0.0833  0.0773  0.0606 0.0737  0.88
     6   0.0547  0.0435  0.0518 0.0500  0.0862  0.0731  0.0625 0.0739  1.48
     9   0.0611  0.0641  0.0422 0.0558  0.1660  0.1153  0.0772 0.1195  2.14
-   12   0.0450  0.0856  0.1347 0.0884    --    0.0796  0.0753 0.0775  0.88
+   12   0.0450  0.0856  0.1347 0.0884  0.1664  0.0796  0.0753 0.1071  1.21
+   15   0.0521  0.1444  0.2239 0.1401    --      --    0.0686   --     --
+   18   0.1138  0.3561  0.2270 0.2323
+   21   0.3736  0.3894  0.3527 0.3719
+   30   0.5168  0.3229  0.3220 0.3872
 ```
 
 At epoch 3 the two poles interleave -- no signal. At epochs 6 and 9 the three
@@ -418,14 +422,29 @@ RF01 seeds are **all** below the three RF02 seeds with no overlap (0.0547 <
 a stated direction has probability 1/C(6,3) = 0.05 exactly. The two epochs are
 the same six runs, so that is one p = 0.05, not two.
 
-**Epoch 12 breaks the separation, and it is the row that keeps this honest.**
-RF02's epoch-9 jump was largely an excursion: S02 goes 0.1153 -> 0.0796 and S03
-0.0772 -> 0.0753, while RF01 hits its own knee and spreads 102%. At epoch 12 the
-two poles interleave again and the ratio is back to 0.88. So the epoch-by-epoch
-separation is **not** a stable ordering, and "RF02's knee is earlier, it
-degrades faster" -- read off epoch 9 alone when it was the last row available --
-is not supported. RF02's trajectory is *noisy*, not collapsing: 0.0737, 0.0739,
-0.1195, 0.0775 on the mean.
+**Epoch 12 breaks the separation, and the row was read twice before it was
+complete.** First off epoch 9 alone ("RF02's knee is earlier"), then off a
+two-seed epoch 12 (mean 0.0775, ratio 0.88, "the poles reverse"). With S01's
+0.1664 in, epoch 12 is mean 0.1071 and ratio 1.21 -- RF02 still worse on the
+mean, but the ranges overlap heavily ({0.0450, 0.0856, 0.1347} against {0.1664,
+0.0796, 0.0753}) so there is no separation either way. **Do not read a row until
+all three seeds are in it.**
+
+*What is actually happening is a crossover, and it is the more interesting
+result.* Per seed, RF02 does not share one trajectory: S01 degrades at epoch 9
+and stays degraded (0.0833, 0.0862, 0.1660, 0.1664), S02 spikes at 9 and
+recovers (0.0773, 0.0731, 0.1153, 0.0796), S03 is flat throughout and is the
+best seed (0.0606, 0.0625, 0.0772, 0.0753, 0.0686). None of them does what RF01
+does, which is to reach a much better minimum at epoch 6 and then collapse 7x by
+epoch 30. Seed-matched at epoch 15, S03 against S03: **RF01 0.2239 against RF02
+0.0686, a factor of 3.3 the other way**, on one seed so far.
+
+So the poles appear to cross: the stochastic objective buys a real basin around
+epochs 6-9 and then loses it, while the deterministic one never reaches that
+basin but does not fall out of it either. If that holds when S01 and S02 reach
+epoch 15, **the sign of the pole result depends on the scoring epoch** -- which
+turns C2's fixed epoch from a bookkeeping convention into the choice that
+determines the headline. Epoch 10 is inside the window where RF01 wins.
 
 The seed-by-seed comparison against each seed's own best epoch is the form that
 **does** survive epoch 12 (nothing at 12 beat any RF02 seed's earlier best): RF01 {0.0450, 0.0435, 0.0422}
