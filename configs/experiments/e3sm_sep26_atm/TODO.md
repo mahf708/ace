@@ -422,29 +422,53 @@ RF01 seeds are **all** below the three RF02 seeds with no overlap (0.0547 <
 a stated direction has probability 1/C(6,3) = 0.05 exactly. The two epochs are
 the same six runs, so that is one p = 0.05, not two.
 
-**Epoch 12 breaks the separation, and the row was read twice before it was
-complete.** First off epoch 9 alone ("RF02's knee is earlier"), then off a
-two-seed epoch 12 (mean 0.0775, ratio 0.88, "the poles reverse"). With S01's
-0.1664 in, epoch 12 is mean 0.1071 and ratio 1.21 -- RF02 still worse on the
-mean, but the ranges overlap heavily ({0.0450, 0.0856, 0.1347} against {0.1664,
-0.0796, 0.0753}) so there is no separation either way. **Do not read a row until
-all three seeds are in it.**
+**There is no pole separation. The apparent one was an artefact of comparing
+RF01 near its optimum against RF02 far from its own.** Full trajectories:
 
-*What is actually happening is a crossover, and it is the more interesting
-result.* Per seed, RF02 does not share one trajectory: S01 degrades at epoch 9
-and stays degraded (0.0833, 0.0862, 0.1660, 0.1664), S02 spikes at 9 and
-recovers (0.0773, 0.0731, 0.1153, 0.0796), S03 is flat throughout and is the
-best seed (0.0606, 0.0625, 0.0772, 0.0753, 0.0686). None of them does what RF01
-does, which is to reach a much better minimum at epoch 6 and then collapse 7x by
-epoch 30. Seed-matched at epoch 15, S03 against S03: **RF01 0.2239 against RF02
-0.0686, a factor of 3.3 the other way**, on one seed so far.
+```
+epoch    RF01 mean   RF02 mean    RF02 seeds
+    3      0.0836      0.0737     0.0833  0.0773  0.0606
+    6      0.0500      0.0739     0.0862  0.0731  0.0625
+    9      0.0558      0.1195     0.1660  0.1153  0.0772
+   12      0.0884      0.1071     0.1664  0.0796  0.0753
+   15      0.1401      0.0818     0.0895  0.0872  0.0686
+   18      0.2323      0.0402       --    0.0361  0.0442   <- RF02 best, 20% spread
+   21      0.3719
+   30      0.3872
+```
 
-So the poles appear to cross: the stochastic objective buys a real basin around
-epochs 6-9 and then loses it, while the deterministic one never reaches that
-basin but does not fall out of it either. If that holds when S01 and S02 reach
-epoch 15, **the sign of the pole result depends on the scoring epoch** -- which
-turns C2's fixed epoch from a bookkeeping convention into the choice that
-determines the headline. Epoch 10 is inside the window where RF01 wins.
+RF02 bottoms at **epoch 18**, not 3-6, and bottoms *lower than RF01 ever gets*:
+S02's 0.0361 beats every one of RF01's per-seed bests {0.0450, 0.0435, 0.0422}.
+Epoch 18 is also RF02's tightest row (20%), so this is signal, not scatter. At
+epoch 18 seed-matched, RF02 S02 is **10x** better than RF01 S02 (0.0361 against
+0.3561) and S03 **5x** better (0.0442 against 0.2270).
+
+The seed-best comparison -- the one form that had survived three revisions --
+therefore breaks too. RF02's bests are now {0.0833, 0.0361, 0.0442} against
+RF01's {0.0450, 0.0435, 0.0422}: interleaved, no separation. Everything claimed
+here on 09-07 about a stochastic-pole advantage came from reading epochs 6-9,
+where RF01 sits in its basin and RF02 is still 9-12 epochs from reaching its
+own. **The claim is withdrawn, not weakened.**
+
+What is left is a real and much sharper result: **the two poles have optima nine
+epochs apart** -- RF01 at 6, RF02 at 18 -- and RF01 falls out of its basin by 7x
+while RF02 does not. Any comparison at a shared fixed epoch measures the gap
+between the arms' *schedules*, not between the objectives.
+
+### C2 is not safe, and this is the finding that breaks it
+
+`SCORING_EPOCH = 10` was calibrated on RF01 alone -- an offline two-seed sweep
+plus RF01's own in-training trajectory. RF02 at epoch 9 reads 0.1195 against its
+epoch-18 value of 0.0402: scoring the deterministic pole at 10 reports it as
+**3x worse than it actually gets**, and would have handed the campaign a
+headline ("the stochastic objective wins") that the epoch-18 row reverses.
+
+A single fixed epoch across arms is only sound if the arms share a knee. Two
+arms have now been measured and they do not. Before any arm is scored, C2 needs
+re-deciding -- options are a per-arm best epoch (selection on the reported
+metric, which C2 rejected for good reason), a fixed *late* epoch chosen to be
+past every arm's knee, or reporting each arm's whole trajectory and refusing a
+single number. This is now blocking, not a refinement.
 
 The seed-by-seed comparison against each seed's own best epoch is the form that
 **does** survive epoch 12 (nothing at 12 beat any RF02 seed's earlier best): RF01 {0.0450, 0.0435, 0.0422}
