@@ -1,0 +1,3 @@
+runid	exp	study	word	seed	priority	epochs	nodes	rel	run_hours	warm_start_from	note
+BL01.sep26v2.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z1.S01	BL01	baseline	D0_G0_I0_M2_N0_Q0_R4_Y0_Z1	01	1	30	2	1.52	114		sep26's RO04 word (sampled rollout to 20 steps, pure CRPS at two members) on the sep26v2 minimal 11-year sparse dataset -- one of this pilot's two baselines
+BL02.sep26v2.atm.D1_G0_I0_M1_N0_Q0_R2_Y0_Z0.S01	BL02	baseline	D1_G0_I0_M1_N0_Q0_R2_Y0_Z0	01	1	30	2	0.90	74		sep26's RO03 word with R2 instead of R1 (two steps, both scored) on the deterministic row (MSE, one member, no noise), on the sep26v2 minimal 11-year sparse dataset -- this pilot's other baseline

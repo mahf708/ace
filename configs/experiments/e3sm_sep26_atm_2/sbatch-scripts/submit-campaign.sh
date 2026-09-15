@@ -1,0 +1,146 @@
+#!/bin/bash
+# Queue the sep26v2 pilot campaign in priority order.
+#
+#     ./submit-campaign.sh --dry-run              # print what would be queued
+#     ./submit-campaign.sh --preflight            # stage + validate, queue nothing
+#     ./submit-campaign.sh                        # queue P1..P3
+#     ./submit-campaign.sh --max-priority 5       # ...including the tail
+#     ./submit-campaign.sh --only LG01            # one experiment, by id
+#     ./submit-campaign.sh --only RF02 --reservation _CAP_aigs_hist
+#     ./submit-campaign.sh --only LG01 --qos regular --time 02:00:00
+#
+# --reservation also switches the partition, the QOS and the node constraint,
+# because a reservation's nodes are hbm80g while the batch script asks for
+# hbm40g. Setting only the reservation leaves the job pending on
+# `BadConstraints` indefinitely rather than failing, which is how an RF02 seed
+# spent its first minutes in the reservation doing nothing.
+#
+# --qos and --time are the off-reservation counterparts, and set FME_QOS /
+# FME_TIME, which run-train.sh already turns into sbatch overrides. They are
+# mutually exclusive with --reservation rather than merely losing to it: a
+# reservation appends its own --qos=resv AFTER FME_QOS, so `--reservation X
+# --qos regular` would silently run in the reservation. Refuse instead.
+#
+# Off-reservation, the pairing is `--qos regular --time 02:00:00`, and the
+# WALLTIME is what matters, not the QOS. Measured 2026-09-07 over gpu_regular
+# jobs of 3-8 nodes: a <=2 h request waits a median 5.3 h, everything from 2-4 h
+# up waits 33-59 h. Backfill is the only way in (priority is a per-QOS constant
+# plus age; fairshare has weight 0), and backfill only takes short jobs.
+#
+# Do NOT reach for `--qos preempt` on the strength of its shorter pending list.
+# It preempts only debug_preempt/overrun/sparewarmer -- never gpu_regular -- so
+# it buys no position, and it is itself preemptible by gpu_interactive and
+# resv_shared. Same shape, same window: preempt waits a median 39.2 h against
+# regular's 5.5 h. See TODO E1; this campaign lost 4.4 h learning it.
+#
+# Priorities are 1..5 and the default cap is 3. P1 is the deterministic
+# reference, which five arms difference against and which therefore has to
+# finish first; P2 is the mechanism block; P3 the single-factor arms that carry
+# the remaining claims. P4 and P5 are the tail, dropped first if the charge
+# budget bites. sep26v2 is this two-run pilot, everything at P1; it has its
+# own directory and its own submit script, so there is no shared priority
+# space with sep26 or aug26 to defend against.
+#
+# Reads MANIFEST.tsv, which generate-campaign.sh writes. Every column it uses is
+# named in the header, so a column added to the manifest does not shift this
+# script's parsing.
+#
+# run-train.sh refuses a dirty worktree, so a campaign submission fails fast
+# rather than queueing half a campaign against uncommitted code. It also refuses
+# to submit a run id that is already in your queue: two jobs writing ckpt.tar in
+# one directory do not fail, they silently produce one corrupted run.
+#
+# On the node budget: at 40 concurrent nodes out of 1408 hbm40g in gpu_ss11,
+# this campaign is charge-bound rather than concurrency-bound, so there is no
+# reservation to overflow and no ordering constraint beyond priority.
+
+set -euo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+EXP=$(dirname "$HERE")
+MANIFEST="$EXP/runs/MANIFEST.tsv"
+RUN="$HERE/run-train.sh"
+
+DRY=0
+PRE=0
+ONLY=""
+MAXP=3
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run)      DRY=1; shift ;;
+        --preflight)    PRE=1; shift ;;
+        --only)         ONLY="${2:?--only needs an experiment id or run id}"; shift 2 ;;
+        --reservation)  export FME_RESERVATION="${2:?--reservation needs a name}"; shift 2 ;;
+        --qos)          export FME_QOS="${2:?--qos needs a name}"; shift 2 ;;
+        --time)         export FME_TIME="${2:?--time needs HH:MM:SS}"; shift 2 ;;
+        --max-priority) MAXP="${2:?--max-priority needs a number}"; shift 2 ;;
+        *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N]" >&2
+           echo "              [--reservation NAME | --qos NAME] [--time HH:MM:SS]" >&2
+           echo "       N is 1..3 for the arms that carry the claims, 4..5 for the tail" >&2
+           exit 2 ;;
+    esac
+done
+
+# See the --qos note in the header: a reservation appends --qos=resv after
+# FME_QOS, so the combination would run in the reservation while claiming not
+# to. Refuse rather than pick a winner.
+if [ -n "${FME_RESERVATION:-}" ] && [ -n "${FME_QOS:-}" ]; then
+    echo "--reservation and --qos are mutually exclusive:" >&2
+    echo "  a reservation forces --qos=resv, so --qos ${FME_QOS} would be ignored." >&2
+    exit 2
+fi
+
+[ -f "$MANIFEST" ] || {
+    echo "no $MANIFEST -- run ./generate-campaign.sh first" >&2; exit 1; }
+
+# Resolve columns by NAME, from the header. The manifest carries provenance
+# columns (rel, run_hours) that are for humans and may grow; positional parsing
+# would break the moment one is added.
+header=$(head -1 "$MANIFEST")
+col() { awk -v want="$1" -F'\t' 'NR==1{for(i=1;i<=NF;i++) if($i==want){print i; exit}}' "$MANIFEST"; }
+C_ID=$(col runid); C_LABEL=$(col exp); C_PRI=$(col priority)
+C_NODES=$(col nodes); C_HOURS=$(col run_hours); C_NOTE=$(col note)
+for c in "$C_ID" "$C_LABEL" "$C_PRI" "$C_NODES"; do
+    [ -n "$c" ] || { echo "MANIFEST.tsv is missing a required column: $header" >&2; exit 1; }
+done
+
+total=0
+count=0
+hours=0
+while IFS=$'\t' read -r -a f; do
+    [ "${f[$((C_ID-1))]}" = "runid" ] && continue
+    runid="${f[$((C_ID-1))]}"; label="${f[$((C_LABEL-1))]}"
+    pri="${f[$((C_PRI-1))]}"; nodes="${f[$((C_NODES-1))]}"
+    rh="${f[$((C_HOURS-1))]:-0}"; note="${f[$((C_NOTE-1))]:-}"
+    [ "$pri" -le "$MAXP" ] || continue
+    if [ -n "$ONLY" ] && [ "$label" != "$ONLY" ] && [ "$runid" != "$ONLY" ]; then
+        continue
+    fi
+    total=$((total + nodes))
+    count=$((count + 1))
+    hours=$((hours + nodes * rh))
+    if [ "$DRY" = 1 ]; then
+        printf 'P%-2s %2s nodes %4s h  %-40s %s\n' "$pri" "$nodes" "$rh" "$runid" "$note"
+        continue
+    fi
+    printf 'P%-2s %2s nodes  %s\n' "$pri" "$nodes" "$runid"
+    # < /dev/null: the child inherits this loop's stdin, which is the manifest.
+    # Anything it reads from stdin is a run that never gets submitted.
+    if [ "$PRE" = 1 ]; then
+        "$RUN" atm "$runid" --no-submit > /dev/null < /dev/null \
+            || { echo "PREFLIGHT FAILED: $runid" >&2; exit 1; }
+    else
+        "$RUN" atm "$runid" > /dev/null < /dev/null
+    fi
+done < "$MANIFEST"
+
+echo
+if [ "$DRY" = 1 ]; then
+    echo "$count runs, $total nodes concurrent, ~$hours node-hours (dry run, nothing submitted)"
+elif [ "$PRE" = 1 ]; then
+    echo "$count runs, $total nodes -- all staged and validated, nothing queued"
+else
+    echo "$count runs, $total nodes submitted, ~$hours node-hours"
+fi
+exit 0
