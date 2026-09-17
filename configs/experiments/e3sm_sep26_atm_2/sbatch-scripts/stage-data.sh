@@ -44,7 +44,7 @@ STREAMS=${STAGE_STREAMS:-12}
 # glob gives a short dataset, not an error.
 if [ "${1:-}" = "--training" ]; then
     shift
-    DST=${FME_DATA_ROOT:-${PSCRATCH:?PSCRATCH must be set}/v3.LR.historical_0101.aigo/run}
+    DST=${FME_DATA_ROOT:-/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run}
     set -- '19[4-9]' '20[0-9]'
 fi
 [ $# -gt 0 ] || set -- 204

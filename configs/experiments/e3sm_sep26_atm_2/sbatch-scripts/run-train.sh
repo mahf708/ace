@@ -180,7 +180,7 @@ fi
 # `FME_DATA_ROOT=` -- explicitly empty -- opts back out and leaves the
 # template's CFS path alone. Hence ${VAR-default}, not ${VAR:=default}, which
 # would swallow the empty value and make the opt-out silently do nothing.
-FME_DATA_ROOT="${FME_DATA_ROOT-${PSCRATCH:?PSCRATCH must be set}/v3.LR.historical_0101.aigo/run}"
+FME_DATA_ROOT="${FME_DATA_ROOT-/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run}"
 if [ -n "$FME_DATA_ROOT" ]; then
     if [ ! -d "$FME_DATA_ROOT" ]; then
         # Failing here beats falling back to CFS quietly. A silent fallback
