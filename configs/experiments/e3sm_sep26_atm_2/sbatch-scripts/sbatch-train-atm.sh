@@ -22,7 +22,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=128
-#SBATCH -t 12:00:00
+#SBATCH -t 48:00:00
 #SBATCH --output=joblogs/%x-%j.out
 #SBATCH --signal=B:USR1@300    # walltime requeue; see the trap at the bottom.
                                # B: = batch shell ONLY. Without it Slurm signals
