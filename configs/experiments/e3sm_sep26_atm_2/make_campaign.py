@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Generate the sep26v2 atmosphere PILOT campaign into runs/.
+"""Generate the sep26v3 atmosphere PILOT campaign into runs/.
 
     ./make_campaign.py --list          # the run list and the budget
     ./make_campaign.py --all -o runs   # write every run
     ./make_campaign.py --exp BL01      # one experiment, to stdout
 
-sep26v2 is a deliberately minimal-data pilot for two arms already defined in
-the sep26 campaign (RO04's word and RO03's R2 counterpart), run on a sparse
-~11-year training set instead of the full continuous record, to check whether
-this much cheaper dataset still yields a usable model before committing to
-the full sep26 data footprint. See config-train-atm.template.yaml's header
-for the exact train/validation/test periods and why they are disjoint.
+sep26v3 trains the same arms as sep26v2 (two arms already defined in the
+sep26 campaign -- RO04's word and RO03's R2 counterpart -- plus the ablations
+added since) on the FULL continuous 1940-1970 and 1980-1990 record, now that
+sep26v2's minimal ~11-year sparse-subset check showed a cheaper dataset was
+worth pursuing further. See config-train-atm.template.yaml's header for the
+exact train/validation periods and why they are disjoint. The wandb run
+group/tag stay pinned to the original sep26v2 identity (WANDB_CAMPAIGN) even
+though runids/filenames/output dirs have moved to sep26v3.
 
     <exp>.<campaign>.<realm>.<factor word>.S<seed>
-    BL01 .sep26v2   .atm    .D0_G0_I0_M2_N0_Q0_R4_Y0_Z1.S01
+    BL01 .sep26v3   .atm    .D0_G0_I0_M2_N0_Q0_R4_Y0_Z1.S01
 
 The experiment id is TWO LETTERS naming the study family plus two digits, so a
 run id says which question it belongs to before any table is consulted:
@@ -39,7 +41,12 @@ from collections.abc import Mapping
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
-CAMPAIGN = "sep26v2"
+CAMPAIGN = "sep26v3"
+# The wandb run group/tag stay pinned to the sep26v2 identity so the fuller
+# sep26v3 dataset re-run of the campaign keeps landing in the same wandb
+# "folder" as the original pilot, even though runids/filenames/output dirs
+# have moved on to sep26v3 (see env_file()).
+WANDB_CAMPAIGN = "sep26v2"
 REALM = "atm"
 TEMPLATE = HERE / "config-train-atm.template.yaml"
 
@@ -49,10 +56,11 @@ WANDB_PROJECT = "ACE2S-sep26v2-atm"
 WANDB_ENTITY = "e3sm-aig"
 
 # Sizing.  The template is built for local batch 1, so ranks == batch_size.
-# BATCH is 8 (not sep26's 16): a cheaper footprint fits this pilot's purpose,
-# and it is also what makes the 8-point inference blocks divide the rank
-# count exactly (see apply_sizing).
-BATCH = 8
+# BATCH is 16 (sep26's full batch size): sep26v3 moved off the minimal-data
+# pilot's cheaper BATCH=8 footprint once it started training on the full
+# dataset, and 16 is also what makes the 8-point inference blocks divide the
+# rank count exactly (see apply_sizing).
+BATCH = 16
 LOCAL_BATCH = 1
 GPUS_PER_NODE = 4
 DEFAULT_EPOCHS = 30
@@ -60,17 +68,17 @@ DEFAULT_EPOCHS = 30
 INFERENCE_EVALUATIONS = 10
 # Per-block rollout length in years, keyed by the inference block's `name` in
 # the template. The train-window block scores 2-year rollouts (per the pilot
-# design); the held-out test block keeps sep26's 5-year rollout since it is
-# unweighted and only used for validation of generalization, not checkpoint
-# selection.
-INFERENCE_YEARS_BY_NAME = {"inference": 2, "test": 5}
+# design). There is no held-out test block in sep26v3 (removed along with the
+# sparse-dataset pilot's test period).
+INFERENCE_YEARS_BY_NAME = {"inference": 2}
 STEPS_PER_YEAR = 1460  # 6-hourly, noleap
 
 # Inherited from sep26's measurement on aug26's E01 (63.6 h training + 14.2 h
 # inline inference + ~3 h setup on 4 nodes / batch 16 / 30 epochs, full
-# continuous data). NOT re-measured for this pilot's batch 8 / sparse 11-year
-# dataset -- treat run_hours here as a rough placeholder, not a budget you can
-# rely on, until a real run measures it.
+# continuous data) -- the same sizing/data footprint sep26v3 now uses, unlike
+# sep26v2's batch 8 / sparse 11-year pilot. Still not re-measured on this
+# campaign's own arms, so treat run_hours here as a rough placeholder, not a
+# budget you can rely on, until a real run measures it.
 TRAIN_HOURS_AT_REL_1 = 63.6
 FIXED_HOURS = 17.0
 
@@ -172,10 +180,11 @@ BASELINE = {
 }
 
 # Relative training cost.  Inherited from sep26 (analysis/card-sweep.sh,
-# measured 2026-09-03 on batch 16 / the full continuous dataset). NOT
-# re-measured at this pilot's batch 8 / sparse 11-year data -- see the
-# TRAIN_HOURS_AT_REL_1 note above. Kept only so `rel`/`run_hours` print
-# something in --list; do not treat them as a real budget for this pilot.
+# measured 2026-09-03 on batch 16 / the full continuous dataset) -- the same
+# footprint sep26v3 now uses. Still not re-measured on this campaign's own
+# arms -- see the TRAIN_HOURS_AT_REL_1 note above. Kept only so
+# `rel`/`run_hours` print something in --list; do not treat them as a real
+# budget for this pilot.
 REL_MEMBERS = {"1": 0.476, "2": 1.0, "3": 1.435}
 REL_ROLLOUT = {
     "0": 1.0,
@@ -187,6 +196,10 @@ REL_ROLLOUT = {
 
 STUDIES = {
     "BL": "baseline",
+    "LG": "loss geometry",
+    "RO": "rollout",
+    "EN": "ensemble size",
+    "NC": "noise conditioning",
 }
 
 
@@ -306,26 +319,90 @@ class Run:
 
 # ------------------------------------------------------------------ the runs --
 #
-# Just the two arms this pilot exists to test.  Both reuse a word already
-# defined in sep26 (RO04, and RO03 with R2 instead of R1) so their objective
-# semantics are already understood; the only thing new here is the data.
+# The two arms this pilot opened with (BL01, BL02), now at three seeds each so
+# the sweep below has an error bar to read against, plus a first sweep across
+# the objective's other axes -- loss geometry, rollout depth, ensemble size and
+# noise conditioning -- all on sep26v3's full continuous 1940-1970/1980-1990
+# dataset (sep26v2's minimal 11-year sparse subset, superseded here).
+# Every word below reuses a level combination already understood from sep26
+# (see that campaign's RUNLIST for the LG/RO/EN/NC precedents); the only new
+# thing here is running them against this pilot's dataset, at R4
+# (BL01's sampled 20-step rollout) rather than sep26's R0 default, so each new
+# arm differs from a baseline by exactly the one axis its study name claims.
 
 RUNLIST: list[Experiment] = [
+    # -- baselines ------------------------------------------------------
     Experiment(
         "BL01",
         Word.of(R="4"),
         "sep26's RO04 word (sampled rollout to 20 steps, pure CRPS at two "
-        "members) on the sep26v2 minimal 11-year sparse dataset -- one of "
-        "this pilot's two baselines",
+        "members) on sep26v3's full continuous dataset -- one of this "
+        "pilot's two baselines, rerun here after sep26v2's minimal 11-year "
+        "sparse-dataset check. Three seeds for an error bar.",
+        seeds=(1, 47, 82),
         priority=1,
     ),
     Experiment(
         "BL02",
         Word.of(D="1", M="1", R="2", Z="0"),
         "sep26's RO03 word with R2 instead of R1 (two steps, both scored) on "
-        "the deterministic row (MSE, one member, no noise), on the sep26v2 "
-        "minimal 11-year sparse dataset -- this pilot's other baseline",
+        "the deterministic row (MSE, one member, no noise), on sep26v3's "
+        "full continuous dataset -- this pilot's other baseline, rerun here "
+        "after sep26v2's minimal 11-year sparse-dataset check. Three seeds "
+        "for an error bar.",
+        seeds=(1, 47, 82),
         priority=1,
+    ),
+    # -- loss geometry: MAE (M1 CRPS) with noise wired but nothing in the
+    # M1 objective able to reward it, at BL01's rollout.
+    Experiment(
+        "LG02",
+        Word.of(G="1", M="1", R="4"),
+        "CRPS with a single ensemble member (MAE), with noise wired in but "
+        "nothing in the M1 objective able to reward it, at BL01's rollout.",
+        seeds=(1, 47, 82),
+        priority=2,
+        allow_degenerate=True,
+    ),
+    # -- rollout: the stochastic and deterministic poles at R2 ----------
+    Experiment(
+        "RO01",
+        Word.of(R="2"),
+        "stochastic model (BL01's members/objective) at two steps, both "
+        "scored, losses summed -- mimicking ACE2 training. RO01 - BL01 "
+        "reads the sampled-vs-fixed rollout choice at a fixed two-step depth.",
+        seeds=(1, 47, 82),
+        priority=2,
+    ),
+    Experiment(
+        "RO02",
+        Word.of(D="1", M="1", R="4", Z="0"),
+        "deterministic baseline (BL02's objective) extended to BL01's "
+        "sampled 20-step rollout instead of BL02's fixed two steps -- "
+        "RO02 - BL02 reads the rollout-depth effect on the deterministic "
+        "pole, the same axis RO01 reads on the stochastic one.",
+        seeds=(1, 47, 82),
+        priority=2,
+    ),
+    # -- ensemble size, at BL01's rollout --------------------------------
+    Experiment(
+        "EN02",
+        Word.of(M="3", R="4"),
+        "three-member stochastic ensemble at BL01's full objective (CRPS + "
+        "spectral energy score) and rollout -- EN02 - BL01 is ensemble size "
+        "alone.",
+        seeds=(1, 47, 82),
+        priority=3,
+    ),
+    # -- noise conditioning, at BL01's rollout ---------------------------
+    Experiment(
+        "NC01",
+        Word.of(Z="2", R="4"),
+        "64-dim noise embedding added to the stochastic model (BL01's "
+        "objective), against BL01's 32-dim default -- NC01 - BL01 is noise "
+        "width alone.",
+        seeds=(1, 47, 82),
+        priority=3,
     ),
 ]
 
@@ -607,7 +684,7 @@ def env_file(run: Run) -> str:
     # Every factor token is its own tag, so "every M1 run" is a filter rather
     # than a regex, and the two-letter study prefix groups a whole question.
     tags = [
-        CAMPAIGN,
+        WANDB_CAMPAIGN,
         REALM,
         e.exp,
         e.exp[:2],
@@ -639,8 +716,10 @@ def env_file(run: Run) -> str:
             f"FME_PRIORITY={e.priority}",
             *warm,
             f"WANDB_NAME={run.runid}",
-            # The run group collapses seeds; the job type groups arms.
-            f"WANDB_RUN_GROUP={CAMPAIGN}.{REALM}.{e.exp}",
+            # The run group collapses seeds; the job type groups arms. Pinned
+            # to WANDB_CAMPAIGN (sep26v2), not CAMPAIGN, so this stays the
+            # same wandb group across the sep26v2 -> sep26v3 dataset change.
+            f"WANDB_RUN_GROUP={WANDB_CAMPAIGN}.{REALM}.{e.exp}",
             f"WANDB_JOB_TYPE={run.word.word()}",
             f"WANDB_TAGS={','.join(tags)}",
             f'WANDB_NOTES="{note} | {run.nodes} nodes, {run.ranks} ranks"',
@@ -736,8 +815,8 @@ def report(runs: list[Run]) -> None:
         print(f"  P{p}: {by_pri[p]:>7,.0f} node-h   cumulative {cum:>7,.0f}")
     print(
         "\nrun_hours are inherited sep26 estimates, NOT measured for this "
-        "pilot's batch 8 / sparse 11-year dataset -- treat them as a rough "
-        "placeholder until a real run measures it."
+        "campaign's own arms -- treat them as a rough placeholder until a "
+        "real run measures it."
     )
 
 

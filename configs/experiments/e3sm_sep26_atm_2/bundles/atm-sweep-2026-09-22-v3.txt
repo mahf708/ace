@@ -1,0 +1,36 @@
+# sep26v3 atm campaign: all 21 runs (dataset moved to the full continuous
+# 1940-1970 + 1980-1990 record; batch 16 / 4 nodes each), for one bundled
+# Slurm job via sbatch-scripts/bundle.sh. Includes fresh BL01.S01/BL02.S01
+# reruns on the new dataset -- the ORIGINAL sep26v2 BL01.S01 (job 58485231,
+# still running as of 2026-09-22) and BL02.S01 (job 58485265, completed
+# 2026-09-22) used the old sparse dataset and are untouched by this bundle;
+# their old configs are archived under runs/archive-sep26v2-baselines/.
+#
+# Submit with:
+#     cd sbatch-scripts && ./bundle.sh ../bundles/atm-sweep-2026-09-22-v3.txt        # dry run
+#     cd sbatch-scripts && ./bundle.sh ../bundles/atm-sweep-2026-09-22-v3.txt --go   # submit
+#
+# 84 nodes total (21 runs x 4 nodes each), landing in /pscratch/sd/i/imanick/sep26v3
+# (run-train.sh's default CAMPAIGN_ROOT for this user, now sep26v3).
+
+BL01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z1.S01	/pscratch/sd/i/imanick/sep26v3
+BL01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z1.S47	/pscratch/sd/i/imanick/sep26v3
+BL01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z1.S82	/pscratch/sd/i/imanick/sep26v3
+BL02.sep26v3.atm.D1_G0_I0_M1_N0_Q0_R2_Y0_Z0.S01	/pscratch/sd/i/imanick/sep26v3
+BL02.sep26v3.atm.D1_G0_I0_M1_N0_Q0_R2_Y0_Z0.S47	/pscratch/sd/i/imanick/sep26v3
+BL02.sep26v3.atm.D1_G0_I0_M1_N0_Q0_R2_Y0_Z0.S82	/pscratch/sd/i/imanick/sep26v3
+EN02.sep26v3.atm.D0_G0_I0_M3_N0_Q0_R4_Y0_Z1.S01	/pscratch/sd/i/imanick/sep26v3
+EN02.sep26v3.atm.D0_G0_I0_M3_N0_Q0_R4_Y0_Z1.S47	/pscratch/sd/i/imanick/sep26v3
+EN02.sep26v3.atm.D0_G0_I0_M3_N0_Q0_R4_Y0_Z1.S82	/pscratch/sd/i/imanick/sep26v3
+LG02.sep26v3.atm.D0_G1_I0_M1_N0_Q0_R4_Y0_Z1.S01	/pscratch/sd/i/imanick/sep26v3
+LG02.sep26v3.atm.D0_G1_I0_M1_N0_Q0_R4_Y0_Z1.S47	/pscratch/sd/i/imanick/sep26v3
+LG02.sep26v3.atm.D0_G1_I0_M1_N0_Q0_R4_Y0_Z1.S82	/pscratch/sd/i/imanick/sep26v3
+NC01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z2.S01	/pscratch/sd/i/imanick/sep26v3
+NC01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z2.S47	/pscratch/sd/i/imanick/sep26v3
+NC01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R4_Y0_Z2.S82	/pscratch/sd/i/imanick/sep26v3
+RO01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R2_Y0_Z1.S01	/pscratch/sd/i/imanick/sep26v3
+RO01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R2_Y0_Z1.S47	/pscratch/sd/i/imanick/sep26v3
+RO01.sep26v3.atm.D0_G0_I0_M2_N0_Q0_R2_Y0_Z1.S82	/pscratch/sd/i/imanick/sep26v3
+RO02.sep26v3.atm.D1_G0_I0_M1_N0_Q0_R4_Y0_Z0.S01	/pscratch/sd/i/imanick/sep26v3
+RO02.sep26v3.atm.D1_G0_I0_M1_N0_Q0_R4_Y0_Z0.S47	/pscratch/sd/i/imanick/sep26v3
+RO02.sep26v3.atm.D1_G0_I0_M1_N0_Q0_R4_Y0_Z0.S82	/pscratch/sd/i/imanick/sep26v3

@@ -16,9 +16,10 @@ config agreed with its id and nothing more.  The two blocker rules below are the
 specific lessons; the general point stands: only a real forward and backward
 pass proves a config trains.
 
-sep26v2 is a minimal-data pilot for two arms already defined in sep26 (see
-make_campaign.py's docstring); this checker has no aug26/RF01 claim to verify
-because this campaign inherits no run from another campaign.
+sep26v3 is the full-dataset continuation of sep26v2's minimal-data pilot for
+two arms already defined in sep26 (see make_campaign.py's docstring); this
+checker has no aug26/RF01 claim to verify because this campaign inherits no
+run from another campaign.
 """
 
 import argparse
@@ -29,15 +30,15 @@ from collections.abc import Mapping
 import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
-CAMPAIGN = "sep26v2"
+CAMPAIGN = "sep26v3"
 REALM = "atm"
-BATCH = 8
+BATCH = 16
 LOCAL_BATCH = 1
 GPUS_PER_NODE = 4
 INFERENCE_EVALUATIONS = 10
 # Per-block rollout length in years, keyed by the inference block's `name`.
 # Must match make_campaign.py's INFERENCE_YEARS_BY_NAME.
-INFERENCE_YEARS_BY_NAME = {"inference": 2, "test": 5}
+INFERENCE_YEARS_BY_NAME = {"inference": 2}
 STEPS_PER_YEAR = 1460
 
 # --- duplicated from make_campaign.py, deliberately -------------------------
@@ -80,7 +81,7 @@ LEVELS: dict[str, Mapping[str, object]] = {
     "Y": ALPHA,
     "Z": NOISE_DIM,
 }
-STUDIES = ("BL",)
+STUDIES = ("BL", "LG", "RO", "EN", "NC")
 NOISE_TYPE_AT_ZERO = "gaussian"
 WARM_START_PLACEHOLDER = "OVERRIDE_ME_WARM_START"
 
@@ -335,11 +336,13 @@ def check(path: pathlib.Path) -> list[str]:
             d["logging"].get(field) == expected,
             f"wandb {field} is {d['logging'].get(field)}, not {expected}",
         )
-    want(
-        "/pscratch/" not in path.read_text(),
-        "a generated file names someone's scratch; runs/ has to be "
-        "byte-identical for every teammate",
-    )
+    # NOTE: a guard against "/pscratch/" appearing in the generated config
+    # used to live here, on the theory that runs/ has to be byte-identical
+    # for every teammate. That is no longer true for this campaign: the
+    # dataset's data_path is hardcoded to a specific personal scratch
+    # location (/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run,
+    # see config-train-atm.template.yaml), by explicit choice, so this
+    # invariant is deliberately broken for now.
     return bad
 
 

@@ -52,7 +52,7 @@ set -x
 # parent. RUNID is set by run-train.sh when a run id is given; without one the
 # old job-id behaviour is kept so single ad-hoc runs are unaffected.
 if [ -n "${RUNID:-}" ]; then
-    export FME_OUTPUT_DIR=${CAMPAIGN_ROOT:-${PSCRATCH}/sep26v2}/${RUNID}
+    export FME_OUTPUT_DIR=${CAMPAIGN_ROOT:-${PSCRATCH}/sep26v3}/${RUNID}
 elif [ -z "${RESUME_JOB_ID}" ]; then
     export FME_OUTPUT_DIR=${PSCRATCH}/fme-output/hist-atm-${SLURM_JOB_ID}
 else

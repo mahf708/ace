@@ -29,31 +29,26 @@
 # Sizing. `batch_size` is global and is split across ranks, and this config is
 # built for local batch 1, so the rank count must equal `batch_size`:
 #
-#     B08 ->  8 ranks = 2 nodes   <- this pilot's baseline
-#     B16 -> 16 ranks = 4 nodes
+#     B08 ->  8 ranks = 2 nodes
+#     B16 -> 16 ranks = 4 nodes   <- this pilot's baseline
 #     B32 -> 32 ranks = 8 nodes
 #
-# sep26v2 is a DELIBERATELY MINIMAL-DATA PILOT, run before committing to the
-# full sep26 data footprint: only two arms (BL01, BL02 -- the R4 and R2
-# rollout points already measured in sep26), trained on ~11 sparse years
-# instead of the full continuous record, to see whether a much cheaper
-# dataset still gives a usable model before scaling up. Periods:
+# sep26v3 trains on the FULL continuous 1940-1970 and 1980-1990 record (not the
+# sparse every-4th-year subset sep26v2 piloted), to see whether the fuller
+# dataset improves on the minimal-data pilot before committing to the full
+# sep26 data footprint. Periods:
 #
-#   train      1940-1970 and 1980-1990, every 4th year only (~11 years total)
+#   train      1940-1970 and 1980-1990, continuous (~40 years total)
 #   validation 1970-1980, continuous
-#   test       1990-2000, continuous (inference-only, weight 0.0)
 #
-# The three periods are disjoint by construction: the sparse train years are
-# 1940/44/.../68 and 1980/84/88, none of which fall in 1970-1980, and the
-# 1990-2000 test years postdate every training year. Validation stays
-# out-of-sample, unlike the alternative of extending it to 1990.
+# The two periods are disjoint by construction. There is no held-out test
+# period in this pilot; validation is the only out-of-sample check.
 #
-# The weighted (checkpoint-selecting) inference block below is placed only at
-# the 8 sparse years actually trained on in 1940-1970 (every 4th year, so its
-# 2-year rollouts end by 1970 at the latest) -- uniform over the train period,
-# and never touching the validation window. check_campaign.py enforces that.
-# The held-out test block's 8 ICs are unweighted and spread across 1990-2000.
-# Both blocks' IC counts (8) divide the 8-rank pilot's batch size.
+# The weighted (checkpoint-selecting) inference block below is placed at 16
+# ICs from 1940 to 1966 (~21 months apart, so its 2-year rollouts end by 1968
+# at the latest) -- comfortably inside the now-continuous train window, and
+# never touching the validation window. check_campaign.py enforces that. 16
+# ICs divide the 16-rank pilot's batch size.
 #
 # Launch. From the repo root, no wrapper needed for a single node:
 #
@@ -98,19 +93,21 @@ validate_using_ema: true
 ema:
   decay: 0.999
 max_epochs: 30
-# Every epoch, both the training checkpoint (with optimizer state) and the EMA
-# checkpoint (weights only), so a run can be evaluated at any epoch rather than
-# only at the best-validation point. Storage cost is real -- see EXPERIMENTS.md
-# "Checkpoint storage" before raising max_epochs.
-checkpoint_save_epochs:
-  step: 1
+# Only the EMA checkpoint (weights only) is saved every epoch, so a run can be
+# evaluated at any epoch rather than only at the best-validation point. The
+# training checkpoint (with optimizer state) is not saved per-epoch, since it
+# is only needed to resume training, not for evaluation.
+checkpoint_save_epochs: null
 ema_checkpoint_save_epochs:
   step: 1
 inference:
-  # Uniform over the train period: the 8 years actually sampled every-4th-year
-  # in the 1940-1970 tranche. Each covers 2 years and make_campaign.py sets
-  # n_forward_steps for this block by NAME (see INFERENCE_YEARS_BY_NAME) -- the
-  # 7300 below is a placeholder overwritten at generation time.
+  # 16 ICs spaced ~21 months apart from 1940 to 1966, inside the now-
+  # continuous 1940-1970 train block. Each covers 2 years and make_campaign.py
+  # sets n_forward_steps for this block by NAME (see INFERENCE_YEARS_BY_NAME)
+  # -- the 7300 below is a placeholder overwritten at generation time. 16 ICs
+  # (not 8, as sep26v2 used) so the count divides sep26v3's 16-rank batch;
+  # spacing keeps every 2-year rollout clear of the 1970-1980 validation
+  # window (check_campaign.py enforces that).
   - name: inference
     weight: 1.0
     epochs:
@@ -122,15 +119,23 @@ inference:
       start_indices:
         times: &train_window_ics
         - '1940-01-03T12:00:00'
-        - '1944-01-03T12:00:00'
-        - '1948-01-03T12:00:00'
-        - '1952-01-03T12:00:00'
-        - '1956-01-03T12:00:00'
-        - '1960-01-03T12:00:00'
-        - '1964-01-03T12:00:00'
-        - '1968-01-03T12:00:00'
+        - '1941-10-03T12:00:00'
+        - '1943-07-03T12:00:00'
+        - '1945-04-03T12:00:00'
+        - '1947-01-03T12:00:00'
+        - '1948-10-03T12:00:00'
+        - '1950-07-03T12:00:00'
+        - '1952-04-03T12:00:00'
+        - '1954-01-03T12:00:00'
+        - '1955-10-03T12:00:00'
+        - '1957-07-03T12:00:00'
+        - '1959-04-03T12:00:00'
+        - '1961-01-03T12:00:00'
+        - '1962-10-03T12:00:00'
+        - '1964-07-03T12:00:00'
+        - '1966-04-03T12:00:00'
       dataset: &dataset
-        data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+        data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
         file_pattern: &file_pattern v3.LR.historical_0101.aigo.eam.h0.*.nc
         rename: &rename
           PRECT: surface_precipitation_rate
@@ -201,33 +206,6 @@ inference:
       ipo_index:
         enabled: false
       # mean/mean_norm, annual and enso_index are 1D, unrestricted and stay on.
-  # Held out: unweighted, so it never selects a checkpoint. ICs span the
-  # 1990-2000 test period (unlike the train-window block, this one is not
-  # restricted to the sparse trained years -- it draws from the full
-  # continuous simulation via *dataset, same as before, so a 5-year rollout
-  # from a late IC simply runs past 2000 into data the model never trained on
-  # either way).
-  - name: test
-    weight: 0.0
-    epochs:
-      start: 2
-      step: 3
-    n_forward_steps: 7300
-    forward_steps_in_memory: 20
-    loader:
-      start_indices:
-        times: &test_window_ics
-        - '1990-01-03T12:00:00'
-        - '1991-06-03T12:00:00'
-        - '1992-11-03T12:00:00'
-        - '1994-04-03T12:00:00'
-        - '1995-09-03T12:00:00'
-        - '1997-02-03T12:00:00'
-        - '1998-07-03T12:00:00'
-        - '1999-12-03T12:00:00'
-      dataset: *dataset
-      num_data_workers: 8
-    aggregator: *inference_aggregator_1d
 # wandb. Both realms go to ONE project so atmosphere and ocean runs sit in the
 # same workspace and can be filtered by tag rather than compared across projects.
 # `entity` is the team, not the account: `wandb login` prints
@@ -259,116 +237,43 @@ train_loader:
   # which otherwise all come from the same preloaded window -- a sampling change
   # as well as a throughput one, applied identically to every run in the
   # campaign so comparisons stay valid.
-  batch_size: 8
+  batch_size: 16
   num_data_workers: 8
   time_buffer: 10
   time_buffer_pool_size: 2
   prefetch_factor: 4
-  # Sparse train subset: every 4th year in 1940-1970 (8 years) plus every
-  # 4th year in 1980-1990 (3 years) = 11 years total, a deliberately thin
-  # sample for this minimal-data pilot (see header comment). Each year is
-  # its own concat entry rather than one subset with a stride, because
-  # DataLoaderConfig's `subset` is a contiguous [start_time, stop_time)
-  # range with no stride option.
+  # Full continuous train period: 1940-1970 and 1980-1990 (~40 years total),
+  # replacing sep26v2's sparse every-4th-year subset now that the pilot has
+  # moved past the minimal-data check (see header comment). Two concat
+  # entries, one per continuous span, since DataLoaderConfig's `subset` is a
+  # contiguous [start_time, stop_time) range with no stride option.
   dataset:
     concat:
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+    - data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: *file_pattern
       rename: *rename
       reference_pressure_name: *reference_pressure_name
       overwrite: *overwrite
       subset:
         start_time: '1940-01-01T06:00:00'
-        stop_time: '1941-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1944-01-01T06:00:00'
-        stop_time: '1945-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1948-01-01T06:00:00'
-        stop_time: '1949-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1952-01-01T06:00:00'
-        stop_time: '1953-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1956-01-01T06:00:00'
-        stop_time: '1957-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1960-01-01T06:00:00'
-        stop_time: '1961-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1964-01-01T06:00:00'
-        stop_time: '1965-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1968-01-01T06:00:00'
-        stop_time: '1969-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+        stop_time: '1970-01-01T00:00:00'
+    - data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: *file_pattern
       rename: *rename
       reference_pressure_name: *reference_pressure_name
       overwrite: *overwrite
       subset:
         start_time: '1980-01-01T06:00:00'
-        stop_time: '1981-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1984-01-01T06:00:00'
-        stop_time: '1985-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: *file_pattern
-      rename: *rename
-      reference_pressure_name: *reference_pressure_name
-      overwrite: *overwrite
-      subset:
-        start_time: '1988-01-01T06:00:00'
-        stop_time: '1989-01-01T00:00:00'
+        stop_time: '1990-01-01T00:00:00'
 validation:
   loader:
-    batch_size: 8
+    batch_size: 16
     num_data_workers: 8
     time_buffer: 10
     time_buffer_pool_size: 2
     prefetch_factor: 4
     dataset:
-      data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+      data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: *file_pattern
       rename: *rename
       reference_pressure_name: *reference_pressure_name
@@ -429,11 +334,11 @@ stepper:
           affine_norms: true
       normalization:
         network:
-          global_means_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/centering.nc
-          global_stds_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/scaling-full-field.nc
+          global_means_path: /pscratch/sd/i/imanick/sep26v3/stats/centering.nc
+          global_stds_path: /pscratch/sd/i/imanick/sep26v3/stats/scaling-full-field.nc
         residual:
-          global_means_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/centering.nc
-          global_stds_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/scaling-residual.nc
+          global_means_path: /pscratch/sd/i/imanick/sep26v3/stats/centering.nc
+          global_stds_path: /pscratch/sd/i/imanick/sep26v3/stats/scaling-residual.nc
       ocean:
         surface_temperature_name: TS
         ocean_fraction_name: OCNFRAC

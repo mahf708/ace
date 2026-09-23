@@ -1,13 +1,12 @@
 experiment_dir: OVERRIDE_ME
 save_checkpoint: true
 save_per_epoch_diagnostics: true
-seed: 1
+seed: 47
 validate_using_ema: true
 ema:
   decay: 0.999
 max_epochs: 30
-checkpoint_save_epochs:
-  step: 1
+checkpoint_save_epochs: null
 ema_checkpoint_save_epochs:
   step: 1
 inference:
@@ -22,27 +21,35 @@ inference:
     start_indices:
       times:
       - '1940-01-03T12:00:00'
-      - '1944-01-03T12:00:00'
-      - '1948-01-03T12:00:00'
-      - '1952-01-03T12:00:00'
-      - '1956-01-03T12:00:00'
-      - '1960-01-03T12:00:00'
-      - '1964-01-03T12:00:00'
-      - '1968-01-03T12:00:00'
-    dataset: &id002
-      data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+      - '1941-10-03T12:00:00'
+      - '1943-07-03T12:00:00'
+      - '1945-04-03T12:00:00'
+      - '1947-01-03T12:00:00'
+      - '1948-10-03T12:00:00'
+      - '1950-07-03T12:00:00'
+      - '1952-04-03T12:00:00'
+      - '1954-01-03T12:00:00'
+      - '1955-10-03T12:00:00'
+      - '1957-07-03T12:00:00'
+      - '1959-04-03T12:00:00'
+      - '1961-01-03T12:00:00'
+      - '1962-10-03T12:00:00'
+      - '1964-07-03T12:00:00'
+      - '1966-04-03T12:00:00'
+    dataset:
+      data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: &id004
+      rename: &id002
         PRECT: surface_precipitation_rate
         PRECST: frozen_precipitation_rate
         co2vmr: global_mean_co2
       reference_pressure_name: P0
-      overwrite: &id005
+      overwrite: &id003
         multiply_scalar:
           surface_precipitation_rate: 1000.0
           frozen_precipitation_rate: 1000.0
     num_data_workers: 8
-  aggregator: &id003
+  aggregator:
     histogram:
       enabled: true
       variables: &id001
@@ -108,27 +115,6 @@ inference:
       plot_variables: *id001
     ipo_index:
       enabled: false
-- name: test
-  weight: 0.0
-  epochs:
-    start: 2
-    step: 3
-  n_forward_steps: 7300
-  forward_steps_in_memory: 20
-  loader:
-    start_indices:
-      times:
-      - '1990-01-03T12:00:00'
-      - '1991-06-03T12:00:00'
-      - '1992-11-03T12:00:00'
-      - '1994-04-03T12:00:00'
-      - '1995-09-03T12:00:00'
-      - '1997-02-03T12:00:00'
-      - '1998-07-03T12:00:00'
-      - '1999-12-03T12:00:00'
-    dataset: *id002
-    num_data_workers: 8
-  aggregator: *id003
 logging:
   log_to_screen: true
   log_to_wandb: true
@@ -136,114 +122,42 @@ logging:
   project: ACE2S-sep26v2-atm
   entity: e3sm-aig
 train_loader:
-  batch_size: 8
+  batch_size: 16
   num_data_workers: 8
   time_buffer: 10
   time_buffer_pool_size: 2
   prefetch_factor: 4
   dataset:
     concat:
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+    - data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
+      rename: *id002
       reference_pressure_name: P0
-      overwrite: *id005
+      overwrite: *id003
       subset:
         start_time: '1940-01-01T06:00:00'
-        stop_time: '1941-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+        stop_time: '1970-01-01T00:00:00'
+    - data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
+      rename: *id002
       reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1944-01-01T06:00:00'
-        stop_time: '1945-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1948-01-01T06:00:00'
-        stop_time: '1949-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1952-01-01T06:00:00'
-        stop_time: '1953-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1956-01-01T06:00:00'
-        stop_time: '1957-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1960-01-01T06:00:00'
-        stop_time: '1961-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1964-01-01T06:00:00'
-        stop_time: '1965-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1968-01-01T06:00:00'
-        stop_time: '1969-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
+      overwrite: *id003
       subset:
         start_time: '1980-01-01T06:00:00'
-        stop_time: '1981-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1984-01-01T06:00:00'
-        stop_time: '1985-01-01T00:00:00'
-    - data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
-      file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
-      reference_pressure_name: P0
-      overwrite: *id005
-      subset:
-        start_time: '1988-01-01T06:00:00'
-        stop_time: '1989-01-01T00:00:00'
+        stop_time: '1990-01-01T00:00:00'
 validation:
   loader:
-    batch_size: 8
+    batch_size: 16
     num_data_workers: 8
     time_buffer: 10
     time_buffer_pool_size: 2
     prefetch_factor: 4
     dataset:
-      data_path: /global/cfs/cdirs/e3smdata/simulations/v3.LR.historical_0101.aigo/run
+      data_path: /pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run
       file_pattern: v3.LR.historical_0101.aigo.eam.h0.*.nc
-      rename: *id004
+      rename: *id002
       reference_pressure_name: P0
-      overwrite: *id005
+      overwrite: *id003
       subset:
         start_time: '1970-01-01T06:00:00'
         stop_time: '1980-01-01T00:00:00'
@@ -263,8 +177,19 @@ optimization:
     weight_decay: 0.01
 stepper_training:
   n_ensemble: 1
-  n_forward_steps: 2
-  optimize_last_step_only: false
+  n_forward_steps:
+    outcomes:
+    - steps: 1
+      probability: 0.6
+    - steps: 2
+      probability: 0.2
+    - steps: 4
+      probability: 0.1
+    - steps: 12
+      probability: 0.05
+    - steps: 20
+      probability: 0.05
+  optimize_last_step_only: true
   loss:
     type: MSE
 stepper:
@@ -289,11 +214,11 @@ stepper:
           affine_norms: true
       normalization:
         network:
-          global_means_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/centering.nc
-          global_stds_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/scaling-full-field.nc
+          global_means_path: /pscratch/sd/i/imanick/sep26v3/stats/centering.nc
+          global_stds_path: /pscratch/sd/i/imanick/sep26v3/stats/scaling-full-field.nc
         residual:
-          global_means_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/centering.nc
-          global_stds_path: /global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/scaling-residual.nc
+          global_means_path: /pscratch/sd/i/imanick/sep26v3/stats/centering.nc
+          global_stds_path: /pscratch/sd/i/imanick/sep26v3/stats/scaling-residual.nc
       ocean:
         surface_temperature_name: TS
         ocean_fraction_name: OCNFRAC

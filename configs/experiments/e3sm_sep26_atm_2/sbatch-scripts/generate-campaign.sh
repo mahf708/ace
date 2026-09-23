@@ -1,16 +1,21 @@
 #!/bin/bash
-# Regenerate every config for the sep26v2 atmosphere PILOT campaign.
+# Regenerate every config for the sep26v3 atmosphere PILOT campaign.
 #
 #     ./generate-campaign.sh              # write ../runs
 #     ./generate-campaign.sh --list       # the run list and the budget
 #     ./generate-campaign.sh /some/dir    # write elsewhere
 #
-# The output is identical whoever runs it -- no username, no scratch path, no
-# timestamp -- which is what lets several people share one campaign:
-# regenerating is a no-op against a committed runs/, so nobody dirties the
-# worktree and nobody has to commit before submitting. run-train.sh refuses a
-# dirty worktree, so without that property only the generator's author could
-# launch anything.
+# The output is identical whoever runs it -- no username, no timestamp --
+# which is what lets several people share one campaign: regenerating is a
+# no-op against a committed runs/, so nobody dirties the worktree and nobody
+# has to commit before submitting. run-train.sh refuses a dirty worktree, so
+# without that property only the generator's author could launch anything.
+#
+# EXCEPTION as of sep26v3: the dataset's data_path is hardcoded to a specific
+# personal scratch location (/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo,
+# see config-train-atm.template.yaml), by explicit choice, so runs/ is no
+# longer byte-identical for everyone who can read that path -- only for
+# everyone who can.
 #
 # Sizing is per run and comes out of the config rather than the sbatch file:
 # nodes = batch_size / local_batch / 4. run-train.sh reads FME_NODES from the

@@ -110,7 +110,7 @@ if [ -n "$RUNID" ]; then
     [ -f "$SRC" ] || { echo "no config at $SRC -- generate it with make_ablation_config.py" >&2; exit 1; }
     export CONFIG_NAME="${RUNID}.yaml"
     export RUNID
-    export CAMPAIGN_ROOT="${CAMPAIGN_ROOT:-${PSCRATCH}/sep26v2}"
+    export CAMPAIGN_ROOT="${CAMPAIGN_ROOT:-${PSCRATCH}/sep26v3}"
     cp "$SRC" "$CONFIG_DIR/"
     # Provenance: wandb reads these from the environment, not from the config.
     if [ -f "$EXP_DIR/runs/${RUNID}.env" ]; then

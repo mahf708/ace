@@ -1,37 +1,42 @@
 #!/bin/bash
-# Queue the sep26v2 pilot campaign in priority order.
+# Queue the sep26v2 pilot campaign in priority order, as ONE bundled Slurm job
+# rather than one job per run (see bundle.sh / sbatch-bundle.sh).
 #
 #     ./submit-campaign.sh --dry-run              # print what would be queued
 #     ./submit-campaign.sh --preflight            # stage + validate, queue nothing
-#     ./submit-campaign.sh                        # queue P1..P3
+#     ./submit-campaign.sh                        # queue P1..P3 as one bundle
 #     ./submit-campaign.sh --max-priority 5       # ...including the tail
 #     ./submit-campaign.sh --only LG01            # one experiment, by id
-#     ./submit-campaign.sh --only RF02 --reservation _CAP_aigs_hist
 #     ./submit-campaign.sh --only LG01 --qos regular --time 02:00:00
 #
-# --reservation also switches the partition, the QOS and the node constraint,
-# because a reservation's nodes are hbm80g while the batch script asks for
-# hbm40g. Setting only the reservation leaves the job pending on
-# `BadConstraints` indefinitely rather than failing, which is how an RF02 seed
-# spent its first minutes in the reservation doing nothing.
+# Every matching run is staged individually through run-train.sh --no-submit
+# (config validation, the dirty-worktree refusal, wandb identity, FME_NODES
+# sizing, all unchanged from a single-run submission), then handed to
+# bundle.sh as one bundle file. bundle.sh submits a single sbatch job sized to
+# the sum of the runs' nodes; sbatch-bundle.sh carves the allocation into
+# disjoint node sets and starts one srun step per run inside it, requeueing
+# the whole job together on a walltime signal. A run already queued or
+# running on its own (e.g. one of the runs already in flight) is refused
+# rather than folded in, so re-running this script never disturbs a run that
+# is already going.
 #
-# --qos and --time are the off-reservation counterparts, and set FME_QOS /
-# FME_TIME, which run-train.sh already turns into sbatch overrides. They are
-# mutually exclusive with --reservation rather than merely losing to it: a
-# reservation appends its own --qos=resv AFTER FME_QOS, so `--reservation X
-# --qos regular` would silently run in the reservation. Refuse instead.
-#
-# Off-reservation, the pairing is `--qos regular --time 02:00:00`, and the
-# WALLTIME is what matters, not the QOS. Measured 2026-09-07 over gpu_regular
-# jobs of 3-8 nodes: a <=2 h request waits a median 5.3 h, everything from 2-4 h
-# up waits 33-59 h. Backfill is the only way in (priority is a per-QOS constant
-# plus age; fairshare has weight 0), and backfill only takes short jobs.
+# --qos and --time set FME_QOS / FME_TIME, which bundle.sh turns into sbatch
+# overrides for the one bundle job. WALLTIME is what matters, not the QOS.
+# Measured 2026-09-07 over gpu_regular jobs of 3-8 nodes: a <=2 h request
+# waits a median 5.3 h, everything from 2-4 h up waits 33-59 h. Backfill is
+# the only way in (priority is a per-QOS constant plus age; fairshare has
+# weight 0), and backfill only takes short jobs.
 #
 # Do NOT reach for `--qos preempt` on the strength of its shorter pending list.
 # It preempts only debug_preempt/overrun/sparewarmer -- never gpu_regular -- so
 # it buys no position, and it is itself preemptible by gpu_interactive and
 # resv_shared. Same shape, same window: preempt waits a median 39.2 h against
 # regular's 5.5 h. See TODO E1; this campaign lost 4.4 h learning it.
+#
+# --reservation is not supported for a bundled submission: a reservation's
+# nodes are hbm80g while this campaign's runs stage at hbm40g, and bundle.sh
+# has no partition/qos/constraint override for it the way the single-run path
+# did. Refuse rather than silently ignore it.
 #
 # Priorities are 1..5 and the default cap is 3. P1 is the deterministic
 # reference, which five arms difference against and which therefore has to
@@ -46,9 +51,7 @@
 # script's parsing.
 #
 # run-train.sh refuses a dirty worktree, so a campaign submission fails fast
-# rather than queueing half a campaign against uncommitted code. It also refuses
-# to submit a run id that is already in your queue: two jobs writing ckpt.tar in
-# one directory do not fail, they silently produce one corrupted run.
+# rather than queueing half a campaign against uncommitted code.
 #
 # On the node budget: at 40 concurrent nodes out of 1408 hbm40g in gpu_ss11,
 # this campaign is charge-bound rather than concurrency-bound, so there is no
@@ -60,36 +63,30 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 EXP=$(dirname "$HERE")
 MANIFEST="$EXP/runs/MANIFEST.tsv"
 RUN="$HERE/run-train.sh"
+BUNDLE="$HERE/bundle.sh"
 
 DRY=0
 PRE=0
 ONLY=""
 MAXP=3
+BUNDLE_NAME_ARG=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)      DRY=1; shift ;;
         --preflight)    PRE=1; shift ;;
         --only)         ONLY="${2:?--only needs an experiment id or run id}"; shift 2 ;;
-        --reservation)  export FME_RESERVATION="${2:?--reservation needs a name}"; shift 2 ;;
+        --reservation)  echo "--reservation is not supported for a bundled submission (see the header); cancel and use ./bundle.sh directly with FME_CONSTRAINT if you need it" >&2; exit 2 ;;
         --qos)          export FME_QOS="${2:?--qos needs a name}"; shift 2 ;;
         --time)         export FME_TIME="${2:?--time needs HH:MM:SS}"; shift 2 ;;
         --max-priority) MAXP="${2:?--max-priority needs a number}"; shift 2 ;;
+        --bundle-name)  BUNDLE_NAME_ARG="${2:?--bundle-name needs a name}"; shift 2 ;;
         *) echo "usage: $0 [--dry-run|--preflight] [--only EXP] [--max-priority N]" >&2
-           echo "              [--reservation NAME | --qos NAME] [--time HH:MM:SS]" >&2
+           echo "              [--qos NAME] [--time HH:MM:SS] [--bundle-name NAME]" >&2
            echo "       N is 1..3 for the arms that carry the claims, 4..5 for the tail" >&2
            exit 2 ;;
     esac
 done
-
-# See the --qos note in the header: a reservation appends --qos=resv after
-# FME_QOS, so the combination would run in the reservation while claiming not
-# to. Refuse rather than pick a winner.
-if [ -n "${FME_RESERVATION:-}" ] && [ -n "${FME_QOS:-}" ]; then
-    echo "--reservation and --qos are mutually exclusive:" >&2
-    echo "  a reservation forces --qos=resv, so --qos ${FME_QOS} would be ignored." >&2
-    exit 2
-fi
 
 [ -f "$MANIFEST" ] || {
     echo "no $MANIFEST -- run ./generate-campaign.sh first" >&2; exit 1; }
@@ -104,6 +101,16 @@ C_NODES=$(col nodes); C_HOURS=$(col run_hours); C_NOTE=$(col note)
 for c in "$C_ID" "$C_LABEL" "$C_PRI" "$C_NODES"; do
     [ -n "$c" ] || { echo "MANIFEST.tsv is missing a required column: $header" >&2; exit 1; }
 done
+
+# Same default as run-train.sh, so a bundled submission lands where an
+# individual ./run-train.sh atm <runid> would have.
+CAMPAIGN_ROOT="${CAMPAIGN_ROOT:-${PSCRATCH}/sep26v3}"
+
+BUNDLE_FILE=""
+if [ "$DRY" != 1 ] && [ "$PRE" != 1 ]; then
+    BUNDLE_FILE=$(mktemp "${TMPDIR:-/tmp}/sep26v2-bundle.XXXXXX")
+    trap 'rm -f "$BUNDLE_FILE"' EXIT
+fi
 
 total=0
 count=0
@@ -131,7 +138,11 @@ while IFS=$'\t' read -r -a f; do
         "$RUN" atm "$runid" --no-submit > /dev/null < /dev/null \
             || { echo "PREFLIGHT FAILED: $runid" >&2; exit 1; }
     else
-        "$RUN" atm "$runid" > /dev/null < /dev/null
+        # Collected here rather than submitted individually: bundle.sh stages
+        # and validates every run the same way run-train.sh --no-submit does,
+        # then queues the whole set as one job. A run already queued or
+        # running on its own is refused by bundle.sh rather than folded in.
+        printf '%s\t%s\n' "$runid" "$CAMPAIGN_ROOT" >> "$BUNDLE_FILE"
     fi
 done < "$MANIFEST"
 
@@ -141,6 +152,10 @@ if [ "$DRY" = 1 ]; then
 elif [ "$PRE" = 1 ]; then
     echo "$count runs, $total nodes -- all staged and validated, nothing queued"
 else
-    echo "$count runs, $total nodes submitted, ~$hours node-hours"
+    [ "$count" -gt 0 ] || { echo "nothing matched; nothing to bundle"; exit 0; }
+    NAME=${BUNDLE_NAME_ARG:-sep26v2-p${MAXP}-$(date +%Y%m%dT%H%M%S)}
+    JOBID=$(BUNDLE_NAME="$NAME" "$BUNDLE" "$BUNDLE_FILE" --go)
+    echo "$count runs, $total nodes submitted as one bundle, ~$hours node-hours"
+    echo "bundle job: $JOBID"
 fi
 exit 0
