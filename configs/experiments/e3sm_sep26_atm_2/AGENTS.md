@@ -1,0 +1,93 @@
+# Working log — sep26v3 atmosphere minimal-data pilot
+
+This campaign (`e3sm_sep26_atm_2`) was forked from `../e3sm_sep26_atm`'s
+generator infrastructure (`2a9568fb`) to validate a minimal-data training
+approach — sparse-year subsampling, then a full continuous record — before
+committing the sibling campaign's full run list to it. There is no
+`README.md`/`PLAN.md`/`TODO.md` here yet; this file is the only record of
+decisions, kept so they do not have to be rediscovered. Consult
+`../e3sm_sep26_atm/AGENTS.md` for the shared-generator conventions this
+campaign still follows; this file only covers where the two diverge.
+
+## Guidance for agents working in this directory
+
+* **`config-train-atm.template.yaml` is a template, not a run**, same as the
+  sibling campaign. Edit the template and regenerate; do not hand-edit a
+  `runs/*.yaml`.
+* **`runs/` is entirely generated.** Regenerate with
+  `sbatch-scripts/generate-campaign.sh`, which also runs `check_campaign.py`.
+* **This campaign has deliberately given up the "no personal `$PSCRATCH`"
+  invariant** that `../e3sm_sep26_atm/AGENTS.md` states and that
+  `check_campaign.py` there still enforces. Here, `config-train-atm.template.yaml`
+  hardcodes `data_path` to a specific personal scratch copy
+  (`/pscratch/sd/m/mahf708/v3.LR.historical_0101.aigo/run`), and the
+  normalization stats (`global_means_path`/`global_stds_path`, currently under
+  `/pscratch/sd/i/imanick/sep26v3/stats/`) live under a personal scratch too.
+  `check_campaign.py`'s `/pscratch/` guard was removed for this reason — see
+  the `NOTE` in its `check()` function. **Regeneration is therefore no longer
+  byte-identical for everyone** — only for whoever can read those paths. Do
+  not silently reintroduce the guard or "fix" these paths back to a shared CFS
+  location without checking with the user first; both were deliberate.
+* `bundles/*.txt` + `sbatch-scripts/bundle.sh` submit many runs as one Slurm
+  job (see the header comment in the bundle file for the exact dry-run/submit
+  commands). `CAMPAIGN_ROOT` for this user defaults to `$PSCRATCH/sep26v3`
+  (`sbatch-scripts/run-train.sh`, `submit-campaign.sh`).
+* **`runs/archive-sep26v2-baselines/` holds the old sparse-dataset BL01/BL02
+  configs**, kept for reference after the campaign moved from sep26v2's sparse
+  11-year record to sep26v3's full continuous 1940-1970 + 1980-1990 record.
+  The live `BL01`/`BL02` in `runs/` are fresh reruns on the new dataset; do not
+  confuse the two or delete the archive.
+* **`joblogs/` and `.ipynb_checkpoints/` are scratch, not source.** Neither is
+  part of the generated-config contract; don't treat entries there as
+  authoritative.
+* **`check_campaign.py` duplicates `make_campaign.py`'s level tables on
+  purpose**, same rationale as the sibling campaign: a checker that imports
+  the generator's own mapping can only prove the generator is self-consistent.
+* **A config that parses is not a config that runs.** Smoke-test any new axis
+  with a real forward *and* backward pass before queuing it — see the sibling
+  campaign's AGENTS.md for the specific failure modes already found upstream
+  (`EnergyScoreLoss` at member counts other than 2, `crps-energy`'s
+  `mode_weights` shape bug) that apply here too, since this campaign shares
+  the same loss/model code.
+* Judge a run by `REAL_EXIT=0` and `DONE ---- rank 0`, never by the log tail.
+* **Never `git checkout` a tracked file here.**
+
+## 2026-09-22 — sep26v2 sparse pilot promoted to sep26v3, full 21-run sweep
+
+The initial two-run pilot (BL01, BL02 on an 11-sparse-year dataset) validated
+the minimal-data approach. The campaign then moved to `sep26v3`: the full
+continuous 1940-1970 + 1980-1990 record, batch 16 / 4 nodes per run, and grew
+to the full 21-run sweep recorded in `runs/MANIFEST.tsv` (baseline, loss
+geometry, rollout, ensemble size, and noise-conditioning studies, three seeds
+each). BL01 and BL02 were rerun fresh on the new dataset rather than reused,
+since the old runs used the sparse dataset; their original configs moved to
+`runs/archive-sep26v2-baselines/`.
+
+The bundle in `bundles/atm-sweep-2026-09-22-v3.txt` targets all 21 runs (84
+nodes total) via `sbatch-scripts/bundle.sh`, landing in
+`/pscratch/sd/i/imanick/sep26v3` (this user's `run-train.sh` default
+`CAMPAIGN_ROOT` for this campaign, now `sep26v3` rather than `sep26v2`).
+
+**Normalization stats path changed twice in the same session, at the user's
+request:** first from the shared CFS location
+(`/global/cfs/cdirs/e3smdata/emulator/SamudrACE-E3SMv3/historical/stats-2026-08-13/train-only/atmosphere/`)
+to a personal-scratch parent
+(`/pscratch/sd/i/imanick/sep26v3/stats/train-only/atmosphere/`), then
+flattened to drop the `train-only/atmosphere/` subpath entirely
+(`/pscratch/sd/i/imanick/sep26v3/stats/*.nc`). That directory was empty at the
+time of the change — the normalization scripts (`centering.nc`,
+`scaling-full-field.nc`, `scaling-residual.nc`) were expected to be uploaded
+there afterward, not generated by anything in this repo. If a run fails on
+missing stats files, check that upload landed at the flattened path before
+suspecting the generator.
+
+## Open
+
+* No `README.md`/`PLAN.md`/`TODO.md` exist yet for this campaign; the sibling
+  campaign's equivalents are the closest available reference for what those
+  would look like once written.
+* The personal-`$PSCRATCH` inputs (`data_path`, and now the normalization
+  stats) mean this campaign cannot currently be regenerated identically by
+  anyone other than users who can read `mahf708`'s and `imanick`'s scratch
+  paths. Whether to fix that (e.g. by moving both back to a shared CFS
+  location once the new stats are validated) is still the user's call.
