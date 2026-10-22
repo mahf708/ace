@@ -32,6 +32,14 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+_MIN_TORCH_VERSION = (2, 4, 0)
+_torch_version = tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:3])
+if _torch_version < _MIN_TORCH_VERSION:
+    _min_str = ".".join(str(v) for v in _MIN_TORCH_VERSION)
+    raise RuntimeError(
+        f"FME requires PyTorch >= {_min_str}, but found {torch.__version__}"
+    )
+
 
 class PhysicsNeMoUninitializedDistributedManagerWarning(Warning):
     """Warning to indicate usage of an uninitialized DistributedManager."""
@@ -203,23 +211,6 @@ class DistributedManager:
         )
 
     @staticmethod
-    def initialize_open_mpi(addr, port):
-        """Setup method using OpenMPI initialization."""
-        rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
-        world_size = int(os.environ["OMPI_COMM_WORLD_SIZE"])
-        local_rank = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
-
-        DistributedManager.setup(
-            rank=rank,
-            world_size=world_size,
-            local_rank=local_rank,
-            addr=addr,
-            port=port,
-            backend=DistributedManager.get_available_backend(),
-            method="openmpi",
-        )
-
-    @staticmethod
     def initialize_slurm(port):
         """Setup method using SLURM initialization."""
         rank = int(os.environ["SLURM_PROCID"])
@@ -247,9 +238,6 @@ class DistributedManager:
             `SLURM`: Initialization on SLURM systems.
                 Uses `SLURM_PROCID`, `SLURM_NPROCS`, `SLURM_LOCALID` and
                 `SLURM_LAUNCH_NODE_IPADDR` environment variables.
-            `OPENMPI`: Initialization for OpenMPI launchers.
-                Uses `OMPI_COMM_WORLD_RANK`, `OMPI_COMM_WORLD_SIZE` and
-                `OMPI_COMM_WORLD_LOCAL_RANK` environment variables.
 
         Initialization by default is done using the first valid method in the
         order listed above. Initialization method can also be explicitly
@@ -261,14 +249,9 @@ class DistributedManager:
             warn("Distributed manager is already initialized")
             return
 
-        addr = os.getenv("MASTER_ADDR", "localhost")
         port = os.getenv("MASTER_PORT", "12355")
         # https://pytorch.org/docs/master/notes/cuda.html#id5
-        # was changed in version 2.2
-        if torch.__version__ < (2, 2):
-            os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "0"
-        else:
-            os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "0"
+        os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "0"
         initialization_method = os.getenv(
             "PHYSICSNEMO_DISTRIBUTED_INITIALIZATION_METHOD"
         )
@@ -278,11 +261,9 @@ class DistributedManager:
             except TypeError:
                 if "SLURM_PROCID" in os.environ:
                     DistributedManager.initialize_slurm(port)
-                elif "OMPI_COMM_WORLD_RANK" in os.environ:
-                    DistributedManager.initialize_open_mpi(addr, port)
                 else:
                     warn(
-                        "Could not initialize using ENV, SLURM or OPENMPI "
+                        "Could not initialize using ENV or SLURM "
                         "methods. Assuming this is a single process job"
                     )
                     DistributedManager._shared_state["_is_initialized"] = True
@@ -290,15 +271,13 @@ class DistributedManager:
             DistributedManager.initialize_env()
         elif initialization_method == "SLURM":
             DistributedManager.initialize_slurm(port)
-        elif initialization_method == "OPENMPI":
-            DistributedManager.initialize_open_mpi(addr, port)
         else:
             raise RuntimeError(
                 "Unknown initialization method "
                 f"{initialization_method}. "
                 "Supported values for "
                 "PHYSICSNEMO_DISTRIBUTED_INITIALIZATION_METHOD are "
-                "ENV, SLURM and OPENMPI"
+                "ENV and SLURM"
             )
 
         # Set per rank numpy random seed for data sampling
@@ -453,28 +432,15 @@ class DistributedManager:
 
         if manager._distributed:
             # Setup distributed process group.
-            # device_id (introduced in PyTorch 2.3) only accepts CUDA devices.
+            # device_id only accepts CUDA devices.
+            kwargs: dict = dict(
+                backend=backend,
+                rank=manager.rank,
+                world_size=manager.world_size,
+            )
             if manager.device.type == "cuda":
-                try:
-                    dist.init_process_group(
-                        backend,
-                        rank=manager.rank,
-                        world_size=manager.world_size,
-                        device_id=manager.device,
-                    )
-                except TypeError:
-                    # device_id only introduced in PyTorch 2.3
-                    dist.init_process_group(
-                        backend,
-                        rank=manager.rank,
-                        world_size=manager.world_size,
-                    )
-            else:
-                dist.init_process_group(
-                    backend,
-                    rank=manager.rank,
-                    world_size=manager.world_size,
-                )
+                kwargs["device_id"] = manager.device
+            dist.init_process_group(**kwargs)
 
         if torch.cuda.is_available() and os.environ.get("FME_FORCE_CPU", "0") != "1":
             # Set device for this process and empty cache to optimize memory usage
